@@ -1,4 +1,4 @@
-// gcc -O1 -o BFS_Serial_Opt_Half BFS_Serial_Opt_Half.c -lrt -lm
+// gcc -O1 -o BFS_Opt BFS_Opt.c -lrt -lm
 
 #include <stdio.h>
 #include <string.h>
