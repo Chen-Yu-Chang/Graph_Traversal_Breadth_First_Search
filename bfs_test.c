@@ -6,7 +6,7 @@
 #include <time.h>
 #include <math.h>
 #include <pthread.h>
-#define N 32000  //Nodes
+#define N 1024  //Nodes
 //initialization
 int visited[N];
 int in[N];
