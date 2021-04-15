@@ -1,4 +1,4 @@
-// gcc -O1 -o BFS_Opt BFS_Opt.c -lrt -lm
+// gcc -O1 -o bfs_test bfs_test.c -lrt -lm -lpthread
 
 #include <stdio.h>
 #include <string.h>
@@ -6,24 +6,21 @@
 #include <time.h>
 #include <math.h>
 #include <pthread.h>
- 
-#define N 16384
-//#define N 32768
+//initialization
 int visited[N];
 int in[N];
 int out[N];
 int parents[N];
-int where_in[N];
+int where[N];
 int in_place = 0;
 int out_place = 0;
-int visit_count = 0;
-
-#define INFTY 1000
+int count = 0;
+//Define constants
+#define N 16384 //Nodes
 #define ALPHA 4
 #define BETA  10
 #define OPTIONS 5
-#define GIG 1000000000
-#define CPG 2.9 
+#define CPG 2.9  //Adjust to your computer
 #define NUM_THREADS 4
 #define BLOCK_SIZE 2048
 
@@ -45,34 +42,17 @@ struct thread_data{
 pthread_mutex_t lock;
 pthread_barrier_t barr;
 
- 
 char * graph;
- 
-// graph as adjacency matrix
-//0 1 2 3 4 5 6
-/*
-int graph[N * N] = {  0, 0, 1, 1, 0, 0, 0, 0, 0, 0,//0
-        0, 0, 0, 0, 1, 1, 0, 0, 0, 0, //1
-        1, 0, 0, 1, 1, 0, 0, 1, 0, 0, //2
-        1, 0, 1, 0, 0, 0, 0, 0, 0, 0, //3
-        0, 1, 1, 0, 0, 1, 0, 0, 1, 0, //4
-        0, 1, 0, 0, 1, 0, 1, 0, 0, 1, //5
-        0, 0, 0, 0, 0, 1, 0, 0, 0, 1,
-        0, 0, 1, 0, 0, 0, 0, 0, 1, 0,
-        0, 0, 0, 0, 1, 0, 0, 1, 0, 1,
-        0, 0, 0, 0, 0, 1, 1, 0, 1, 0,
-        };
- */
-// queue implementation
+
+// Implement with queue
 int front;
 int rear;
 int q[N];
 int check_count;
 
-
-
+//Function headers
 void bfs(int v);
-void synch_bfs(int v);
+void hybrid_bfs(int v);
 void initialize_graph(int w);
 int check_graph();
 int check_visited();
@@ -82,41 +62,30 @@ void Top2down();
 void Down2top();
 void *single_thread_bfs(void *threadarg);
 void pthread_bfs();
-void *single_thread_synch_bfs(void *threadarg);
-void pthread_synch_bfs();
-void *single_thread_synch_blocked_bfs(void *threadarg);
-void pthread_synch_blocked_bfs();
+void *single_thread_hybrid_bfs(void *threadarg);
+void pthread_hybrid_bfs();
+void *single_thread_hybrid_blocked_bfs(void *threadarg);
+void pthread_hybrid_blocked_bfs();
  
 int main() {
-    //used to create easily readable outputs
     option_desc[0] = "1. Simple BFS...................";
     option_desc[1] = "2. Parallel Simple BFS..........";
-    option_desc[2] = "3. Synch BFS....................";
-    option_desc[3] = "4. Parallel Synch BFS...........";
-	option_desc[4] = "5. Parallel Blocked Synch BFS...";
+    option_desc[2] = "3. Hybrid BFS...................";
+    option_desc[3] = "4. Parallel Hybrid BFS..........";
+	option_desc[4] = "5. Parallel Blocked Hybrid BFS..";
 
 	printf("\n\n----------------------------------------------------------------\n");
-	printf("INFORMATION \n");
-	printf("----------------------------------------------------------------\n");
-	printf("Number of nodes:           %d\n", N);
-	//printf("Size of adjacency matrix:  %d bytes\n", N*N);
-	printf("Number of threads:         %d\n", NUM_THREADS);
-	printf("Block size:                %d\n", BLOCK_SIZE);
-	printf("Alpha value:               %d\n", ALPHA);
-	printf("Beta value:                %d\n", BETA);
-	printf("Iterations:                %d\n", ITERS);
-	printf("Options:                   %d\n", OPTIONS);
-	
-
+	printf("Number of nodes:      %d\n", N);
+	printf("Number of threads:    %d\n", NUM_THREADS);
+	printf("Block size:           %d\n", BLOCK_SIZE);
+	printf("Alpha value:          %d\n", ALPHA);
+	printf("Beta value:           %d\n", BETA);
+	printf("Iterations:           %d\n", ITERS);
+	printf("Options:              %d\n", OPTIONS);
 	unsigned long long total_size = ((((unsigned long long)(N))*(((unsigned long long)(N))-1))/2);
 
-    // make all vertex unvisited    
+    // set all of the vertices unvisited
     graph = (char *) malloc(total_size);
-	
-	printf("\n\n----------------------------------------------------------------\n");
-	printf("TESTING \n");
-	printf("----------------------------------------------------------------\n");
-
     initialize_graph(50);
     if(check_graph())
         printf("Graph is connected!\n");
@@ -126,7 +95,7 @@ int main() {
 		return 0;
 	}
 
-    //for each option clear memory and time results
+    //Display the execution time & Clear memory
     int i, j;
     check_count = 0;
     OPTION = 0;
@@ -138,19 +107,18 @@ int main() {
         memset(parents, 0, sizeof(parents));
         memset(q, 0, sizeof(q));
         clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time1);
-        bfs(0);
+        bfs(0); //run simple bfs
         clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time2);
         time_stamp[OPTION][i] = diff(time1,time2);
         if(check_visited())
             check_count++;
     }
 
-    //checks to see if each algorithm succusfully tranversed the graph 
+    //checks whether the graph is tranversed
     if(check_count == ITERS)
         printf("%s All tests passed!\n", option_desc[OPTION]);
     else
          printf("%s Only %d/%d tests passed.\n", option_desc[OPTION], check_count, ITERS);
-
 
     check_count = 0;
     OPTION++;
@@ -162,7 +130,7 @@ int main() {
         memset(parents, 0, sizeof(parents));
         memset(q, 0, sizeof(q));
         clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time1);
-        pthread_bfs();
+        pthread_bfs(); //run parallel bfs
         clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time2);
         time_stamp[OPTION][i] = diff(time1,time2);
         if(check_visited())
@@ -174,17 +142,16 @@ int main() {
     else
          printf("%s Only %d/%d tests passed.\n", option_desc[OPTION], check_count, ITERS);
 
-
     check_count = 0;
     OPTION++;
     for (i = 0; i < ITERS; i++) 
     {
         memset(visited, 0, sizeof(visited));
         memset(parents, 0, sizeof(parents));
-        memset(where_in, 0, sizeof(where_in));
+        memset(where, 0, sizeof(where));
         memset(q, 0, sizeof(q));
         clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time1);
-        synch_bfs(0);
+        hybrid_bfs(0); //run hybrid bfs
         clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time2);
         time_stamp[OPTION][i] = diff(time1,time2);
         if(check_visited())
@@ -203,10 +170,10 @@ int main() {
     {
         memset(visited, 0, sizeof(visited));
         memset(parents, 0, sizeof(parents));
-        memset(where_in, 0, sizeof(where_in));
+        memset(where, 0, sizeof(where));
         memset(q, 0, sizeof(q));
         clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time1);
-        pthread_synch_bfs();
+        pthread_hybrid_bfs(); //run hybrid parallel bfs
         clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time2);
         time_stamp[OPTION][i] = diff(time1,time2);
         if(check_visited())
@@ -224,10 +191,10 @@ int main() {
     {
         memset(visited, 0, sizeof(visited));
         memset(parents, 0, sizeof(parents));
-        memset(where_in, 0, sizeof(where_in));
+        memset(where, 0, sizeof(where));
         memset(q, 0, sizeof(q));
         clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time1);
-        pthread_synch_blocked_bfs();
+        pthread_hybrid_blocked_bfs(); //run parallel blocked hybrid parallel bfs
         clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time2);
         time_stamp[OPTION][i] = diff(time1,time2);
         if(check_visited())
@@ -246,7 +213,7 @@ int main() {
     float sum;
     float average;
     float total = (float)(ITERS);
-    // finds the average time for each of the options and prints them out
+    // show the average time for each of the options
     for (j = 0; j < OPTIONS; j++) 
     {
         sum = 0;
@@ -254,7 +221,7 @@ int main() {
         printf("%s ", option_desc[j]);
         for (i = 0; i < ITERS; i++) 
         {
-            float val = (float)((double)(CPG)*(double)(GIG * time_stamp[j][i].tv_sec + time_stamp[j][i].tv_nsec));
+            float val = (float)((double)(CPG)*(double)(1000000000 * time_stamp[j][i].tv_sec + time_stamp[j][i].tv_nsec));
             sum += val;
         }
         average = (sum/total);
@@ -263,10 +230,9 @@ int main() {
 	printf("\n\n");
     return 0;
 }
- 
+// Simple bfs using queue
 void bfs(int v) {
- 
-    // make vertex v visited
+    // vertex v visited
     visited[v] = 1;
     parents[v] = v;
     // enqueue vertex v
@@ -277,7 +243,6 @@ void bfs(int v) {
     {
         // dequeue
         int u = q[front];
-        //printf("%d ", u);
         front++;
  
         // check adjacent nodes from u
@@ -293,105 +258,104 @@ void bfs(int v) {
         }
     }
 }
-
-void synch_bfs(int v)
+// Hybrid bfs
+void hybrid_bfs(int v)
 {
-    //visits the root node and makes it the inital frontier 
+    //visit the root node and set it the inital frontier
     visited[v] = 1;
-    visit_count=1;
+    count=1;
     in[0] = v;
     in_place++;
-    where_in[0] = 1;
+    where[0] = 1;
     parents[v]=v;
     int i;
-    char state = 'A';
+    int state = 1;
 
     while(in_place != 0) //loop until there is no longer a frontier 
     {
-
         out_place =0;
-        int case1 = (N - visit_count)/ALPHA; // determine the cases for state changes 
+        int case1 = (N - count)/ALPHA; // determine the cases for state changes
         int case2 = N/BETA;
         switch(state) //based off of given state 
         {
-            case 'A':
+            case 1:
             {
                 Top2down();
                 if(in_place >= case1)
-                    state= 'B';
+                    state= 2;
                 break;
             }
-            case 'B':
+            case 2:
             {
                 Down2top();
                 if (in_place <= case2)
-                    state ='C';
+                    state = 3;
                 break;
             }
-            case 'C':
+            case 3:
             {
                 Top2down();
                 break;
             }
 
         }
-        ///given step
-        memset(where_in, 0, sizeof(where_in)); // clear where_in aray
+        memset(where, 0, sizeof(where)); // clear where
         in_place = out_place; // make in list the size of out list
-        for (i = 0; i < out_place; ++i) // transfer data from out array to in array 
+        for (i = 0; i < out_place; ++i) // transfer data from "out" array to "in" array
         {
             in[i] = out[i];
-            where_in[out[i]] = 1; // if a given element is in in mark it as high 
+            where[out[i]] = 1; // if a given element is in "in", set it as 1
         }
     }
 
 }
-
+// Funtion Top2Down
 void Top2down()
 {
-    int vertex, neigh;
+    int vertex, neighbor;
     for (vertex = 0; vertex < in_place; ++vertex) // loops through current frontier
     {
-        int current = in[vertex]; // gets exact node for makeshift list
-        for (neigh = 0; neigh < N; ++neigh) // loops through all nodes
+        int current = in[vertex]; // gets exact node
+        for (neighbor = 0; neighbor < N; ++neighbor) // loops through all nodes
         {
-            if (!visited[neigh] && get(current, neigh))  // checks if a connection exist and the node has not been visited 
+            if (!visited[neighbor] && get(current, neighbor))  // checks whether the node is visited
             {
-                parents[neigh] = current; //updates parent away
-                out[out_place] = neigh; // updates the out list
-                out_place++; // keeps track of length of out list
-                visited[neigh] = 1; // updates visited array 
-                visit_count++; // keeps track of the amount of nodes visited for Alpha and beta
+                parents[neighbor] = current; //updates parent array
+                out[out_place] = neighbor; // updates the out list
+                out_place++;
+                visited[neighbor] = 1; // updates visited array
+                count++; // keeps track of the amount of nodes visited for Alpha and beta
             }
         }
     }
 
 }
-
+// Function Down2Top
 void Down2top()
 {
-    int node, neigh;
+    int node, neighbor;
     for ( node = 1; node < N; ++node) // loops through all nodes
     {
-        if (!visited[node] ) //checks if it had been visited 
+        if (!visited[node] ) //checks whether the node is visited
         {
-            for (neigh = 0; neigh < node; ++neigh) // looks for all other nodes for parents && only need to check values less than due to halved memory structure
+            for (neighbor = 0; neighbor < node; ++neighbor) // looks for all other nodes for parents
+            //only check values less than -> halved memory structure
             {  
-    		    if (graph[((node*(node-1))/2)+neigh] && !where_in[neigh] ) // checks if there is a connection and parent is not in the current frontier
+    		    if (graph[((node*(node-1))/2)+neighbor] && !where[neighbor] ) // checks whether parent is not in the current frontier
     		    {
-    		        parents[node] = neigh; //updates parent away
-    		        out[out_place] = neigh; // updates the out list
-    		        out_place++; // keeps track of length of out list
+    		        parents[node] = neighbor; //updates parent array
+    		        out[out_place] = neighbor; // updates the out list
+    		        out_place++;
     		        visited[node] = 1; // updates visited array 
-    		        visit_count++; // keeps track of the amount of nodes visited for Alpha and beta
+    		        count++; // keeps track of the amount of nodes visited for Alpha and beta
     		        break; // breaks if parent is found
     		    }
             }
         }
     }
 }
-
-void *single_thread_synch_bfs(void *threadarg)
+//using one thread for parallel bfs
+void *single_thread_hybrid_bfs(void *threadarg)
 {
       struct thread_data *my_data;
       my_data = (struct thread_data *) threadarg;
@@ -399,40 +363,39 @@ void *single_thread_synch_bfs(void *threadarg)
       int v = my_data->v;
 
     int i;
-	 int vertex, neigh;
-	char state = 'A';
+    int vertex, neighbor;
+	int state = 1;
 	if(pid == 0) //the first thread visits the root and its neighbors 
     {
         visited[0] = 1;
-        visit_count=1;
+        count=1;
         in[0] = 0;
         in_place++;
-        where_in[0] = 1;
+        where[0] = 1;
         parents[0]=0;
         out_place =0;
         
         for (vertex = 0; vertex < in_place; ++vertex)
         {
             int current = in[vertex];
-            for (neigh = 0; neigh < N; ++neigh)
+            for (neighbor = 0; neighbor < N; ++neighbor)
             {
-                if (!visited[neigh] && get(current,neigh))
+                if (!visited[neighbor] && get(current,neighbor))
                 {
-                    parents[neigh] = current;
-                    visited[neigh] = 1;
-                    out[out_place] = neigh;
+                    parents[neighbor] = current;// update parent array
+                    visited[neighbor] = 1; //set to be visited
+                    out[out_place] = neighbor; //update the out list
                     out_place++;
-                    visit_count++;
+                    count++;
                 }
             }
         }
     }
-    int rc1 = pthread_barrier_wait(&barr); // all threads wait before going to the next frontier 
+    int rc1 = pthread_barrier_wait(&barr); // wait before going to the next frontier
     if (rc1 != 0 && rc1 != PTHREAD_BARRIER_SERIAL_THREAD) {
       printf("Could not wait on barrier\n");
       exit(-1);
     }
-
 
 	int case1, case2;
     while(in_place != 0)
@@ -441,49 +404,49 @@ void *single_thread_synch_bfs(void *threadarg)
         switch(state)
         {
 
-            case 'A':
+            case 1:
             {
-                int vertex, neigh;
-                for (vertex = pid; vertex < in_place; vertex+=NUM_THREADS) // each threads attempts to find a node to analyze
+                int vertex, neighbor;
+                for (vertex = pid; vertex < in_place; vertex+=NUM_THREADS) // each thread find a node to analyze
 				{
 				    int current = in[vertex];
-				    for (neigh = 0; neigh < N; ++neigh)
+				    for (neighbor = 0; neighbor < N; ++neighbor)
 				    {
-						if (!visited[neigh] && get(current,neigh)) 
+						if (!visited[neighbor] && get(current,neighbor))
 	                    {
-							if (pthread_mutex_lock(&lock)) printf("\nERROR on lock\n"); //locks whats checked between threads
-	                        parents[neigh] = current;
-	                        visited[neigh] = 1;
-	                        out[out_place] = neigh;
+							if (pthread_mutex_lock(&lock)) printf("\nERROR on lock\n"); //locks what is checked between threads
+	                        parents[neighbor] = current;
+	                        visited[neighbor] = 1;
+	                        out[out_place] = neighbor;
 	                        out_place++;
-	                        visit_count++;
+	                        count++;
 							if (pthread_mutex_unlock(&lock)) printf("\nERROR on unlock\n");
 	                    }
                     }
                 }
                 if(in_place >= case1)
-                    state= 'B';
+                    state= 2;
                 break;
             }
-            case 'B':
+            case 2:
             {
 
-                    int node, neigh;
+                    int node, neighbor;
 					int start = (v == 0) ? 1 : v;
                     for (node = start; node < (v + (int)(N/NUM_THREADS)); ++node) // each thread gets a range of nodes to analyze better for fixed size
                     {
                         if (!visited[node] )
                         {
-                            for (neigh = 0; neigh < node; neigh += 1)
+                            for (neighbor = 0; neighbor < node; neighbor += 1)
                             {
-                                if (get(node,neigh) && !where_in[neigh]) 
+                                if (get(node,neighbor) && !where[neighbor])
                                 {
 									if (pthread_mutex_lock(&lock)) printf("\nERROR on lock\n");//locks whats checked between threads
-                                    parents[node] = neigh;
+                                    parents[node] = neighbor;
                                     visited[node] = 1;
-                                    out[out_place] = neigh;
+                                    out[out_place] = neighbor;
                                     out_place++;
-                                    visit_count++;
+                                    count++;
 									if (pthread_mutex_unlock(&lock)) printf("\nERROR on unlock\n");
                                     break;
 									
@@ -494,25 +457,25 @@ void *single_thread_synch_bfs(void *threadarg)
                     }
 
                 if (in_place <= case2)
-                    state ='C';
+                    state =3;
                 break;
             }
-            case 'C':
+            case 3:
             {
-                int vertex, neigh;
-                for (vertex = pid; vertex < in_place; vertex+=NUM_THREADS) // each threads attempts to find a node to analyze
+                int vertex, neighbor;
+                for (vertex = pid; vertex < in_place; vertex+=NUM_THREADS) // each thread find a node to analyze
 				{
 				    int current = in[vertex];
-				    for (neigh = 0; neigh < N; ++neigh)
+				    for (neighbor = 0; neighbor < N; ++neighbor)
 				    {
-						if (!visited[neigh] && get(current,neigh)) 
+						if (!visited[neighbor] && get(current,neighbor))
 	                    {
-	                        if (pthread_mutex_lock(&lock)) printf("\nERROR on lock\n"); //locks whats checked between threads
-							parents[neigh] = current;
-	                        visited[neigh] = 1;
-	                        out[out_place] = neigh;
+	                        if (pthread_mutex_lock(&lock)) printf("\nERROR on lock\n"); //locks what is checked between threads
+							parents[neighbor] = current;
+	                        visited[neighbor] = 1;
+	                        out[out_place] = neighbor;
 	                        out_place++;
-	                        visit_count++;
+	                        count++;
 	                        if (pthread_mutex_unlock(&lock)) printf("\nERROR on unlock\n");
 	                    }
                     }
@@ -530,15 +493,15 @@ void *single_thread_synch_bfs(void *threadarg)
 
         ///the first thread handles data tranfer and calculating state transitions 
         if(pid == 0){
-            memset(where_in, 0, sizeof(where_in));
+            memset(where, 0, sizeof(where));
             in_place = out_place;
             for (i = 0; i < out_place; ++i)
             {
                 in[i] = out[i];
-                where_in[out[i]] = 1;
+                where[out[i]] = 1;
             }
 			out_place = 0;
-			case1 = (N - visit_count)/ALPHA;
+			case1 = (N - count)/ALPHA;
 			case2 = N/BETA;
         }
 
@@ -550,35 +513,29 @@ void *single_thread_synch_bfs(void *threadarg)
     }
 
 }
-
-void pthread_synch_bfs() { //initilizes threads and components needed for them 
+//Parallel hybrid bfs
+void pthread_hybrid_bfs() {
  
-  pthread_t threads[NUM_THREADS];
+  pthread_t threads[NUM_THREADS];// initilizes threads
   struct thread_data thread_data_array[NUM_THREADS];
   int rc;
   long t;
 
   if(pthread_barrier_init(&barr, NULL, NUM_THREADS)) {
     printf("Could not create a barrier\n");
-  } 
-
-
+  }
   if (pthread_mutex_init(&lock, NULL)) {
     printf("Could not create a lock\n");
   }
-
-  //printf("-------------------\n");
-
   for (t = 0; t < NUM_THREADS; t++) {
     thread_data_array[t].thread_id = t;
     thread_data_array[t].v = ((int)(N/NUM_THREADS))*t;
-    rc = pthread_create(&threads[t], NULL, single_thread_synch_bfs, (void*) &thread_data_array[t]);
+    rc = pthread_create(&threads[t], NULL, single_thread_hybrid_bfs, (void*) &thread_data_array[t]);
     if (rc) {
       printf("ERROR; return code from pthread_create() is %d\n", rc);
       exit(-1);
     }
   }
-
   for (t = 0; t < NUM_THREADS; t++) {
     if (pthread_join(threads[t],NULL)){ 
       printf("ERROR; code on return from join is %d\n", rc);
@@ -586,8 +543,8 @@ void pthread_synch_bfs() { //initilizes threads and components needed for them
     }
   }
 }
-
-void *single_thread_synch_blocked_bfs(void *threadarg) // same as previous function but with blocking for case B
+//using one thread for blocked parallel bfs
+void *single_thread_hybrid_blocked_bfs(void *threadarg)
 {
       struct thread_data *my_data;
       my_data = (struct thread_data *) threadarg;
@@ -595,46 +552,43 @@ void *single_thread_synch_blocked_bfs(void *threadarg) // same as previous funct
       int v = my_data->v;
 
     visited[0] = 1;
-    visit_count=1;
+    count=1;
     in[0] = 0;
     in_place++;
-    where_in[0] = 1;
+    where[0] = 1;
     parents[0]=0;
     int i;
-    char state = 'A';
+    int state = 1;
 
 	int case1, case2;
     while(in_place != 0)
     {
-        //printf("state %c\n",state);
-
-        
         switch(state)
         {
 
-            case 'A':
+            case 1:
             {
-                int vertex, neigh;
+                int vertex, neighbor;
                 for (vertex = pid; vertex < in_place; vertex+=NUM_THREADS)
 				{
 				    int current = in[vertex];
-				    for (neigh = 0; neigh < N; ++neigh)
+				    for (neighbor = 0; neighbor < N; ++neighbor)
 				    {
-						if (!visited[neigh] && get(current,neigh)) 
+						if (!visited[neighbor] && get(current,neighbor))
 	                    {
-	                        parents[neigh] = current;
-	                        visited[neigh] = 1;
-	                        out[out_place] = neigh;
+	                        parents[neighbor] = current;
+	                        visited[neighbor] = 1;
+	                        out[out_place] = neighbor;
 	                        out_place++;
-	                        visit_count++;
+	                        count++;
 	                    }
                     }
                 }
                 if(in_place >= case1)
-                    state= 'B';
+                    state= 2;
                 break;
             }
-            case 'B':
+            case 2:
             {
 
 				int block_i, block_j;
@@ -644,20 +598,20 @@ void *single_thread_synch_blocked_bfs(void *threadarg) // same as previous funct
 					{
 						if(block_i != block_j)
 						{
-							int node, neigh;
+							int node, neighbor;
 							for (node = (block_i*BLOCK_SIZE); node < ((block_i*BLOCK_SIZE) + BLOCK_SIZE); ++node)
 							{
 							    if (!visited[node] )
 							    {
-							        for (neigh = (block_j*BLOCK_SIZE); neigh < ((block_j*BLOCK_SIZE) + BLOCK_SIZE); ++neigh)
+							        for (neighbor = (block_j*BLOCK_SIZE); neighbor < ((block_j*BLOCK_SIZE) + BLOCK_SIZE); ++neighbor)
 							        {
-							            if (graph[((node*(node-1))/2)+neigh] && !where_in[neigh]) // need to find good way to see if in
+							            if (graph[((node*(node-1))/2)+neighbor] && !where[neighbor])
 							            {
-							                parents[node] = neigh;
+							                parents[node] = neighbor;
 							                visited[node] = 1;
-							                out[out_place] = neigh;
+							                out[out_place] = neighbor;
 							                out_place++;
-							                visit_count++;
+							                count++;
 							                break;
 							            }
 
@@ -667,20 +621,20 @@ void *single_thread_synch_blocked_bfs(void *threadarg) // same as previous funct
 						}
 						else
 						{
-							int node, neigh;
+							int node, neighbor;
 							for (node = (block_i*BLOCK_SIZE) + 1; node < ((block_i*BLOCK_SIZE) + BLOCK_SIZE); ++node)
 							{
 							    if (!visited[node] )
 							    {
-							        for (neigh = (block_j*BLOCK_SIZE); neigh < node; ++neigh)
+							        for (neighbor = (block_j*BLOCK_SIZE); neighbor < node; ++neighbor)
 							        {
-							            if (graph[((node*(node-1))/2)+neigh] && !where_in[neigh]) // need to find good way to see if in
+							            if (graph[((node*(node-1))/2)+neighbor] && !where[neighbor])
 							            {
-							                parents[node] = neigh;
+							                parents[node] = neighbor;
 							                visited[node] = 1;
-							                out[out_place] = neigh;
+							                out[out_place] = neighbor;
 							                out_place++;
-							                visit_count++;
+							                count++;
 							                break;
 							            }
 
@@ -692,24 +646,24 @@ void *single_thread_synch_blocked_bfs(void *threadarg) // same as previous funct
 				}
                 
                 if (in_place <= case2)
-                    state ='C';
+                    state = 3;
                 break;
             }
-            case 'C':
+            case 3:
             {
-                int vertex, neigh;
+                int vertex, neighbor;
                 for (vertex = pid; vertex < in_place; vertex+=NUM_THREADS)
 				{
 				    int current = in[vertex];
-				    for (neigh = 0; neigh < N; ++neigh)
+				    for (neighbor = 0; neighbor < N; ++neighbor)
 				    {
-						if (!visited[neigh] && get(current,neigh)) 
+						if (!visited[neighbor] && get(current,neighbor))
 	                    {
-	                        parents[neigh] = current;
-	                        visited[neigh] = 1;
-	                        out[out_place] = neigh;
+	                        parents[neighbor] = current;
+	                        visited[neighbor] = 1;
+	                        out[out_place] = neighbor;
 	                        out_place++;
-	                        visit_count++;
+	                        count++;
 	                    }
                     }
                 }
@@ -718,27 +672,25 @@ void *single_thread_synch_blocked_bfs(void *threadarg) // same as previous funct
 
         }
 
-		int rc1 = pthread_barrier_wait(&barr);
+		int rc1 = pthread_barrier_wait(&barr); // wait before going to the next frontier
 		if (rc1 != 0 && rc1 != PTHREAD_BARRIER_SERIAL_THREAD) {
 		  printf("Could not wait on barrier\n");
 		  exit(-1);
 		}
-
-        ///given step
         if(pid == 0){
-            memset(where_in, 0, sizeof(where_in));
+            memset(where, 0, sizeof(where));
             in_place = out_place;
             for (i = 0; i < out_place; ++i)
             {
                 in[i] = out[i];
-                where_in[out[i]] = 1;
+                where[out[i]] = 1;
             }
 			out_place = 0;
-			case1 = (N - visit_count)/ALPHA;
+			case1 = (N - count)/ALPHA;
 			case2 = N/BETA;
         }
 
-		int rc2 = pthread_barrier_wait(&barr);
+		int rc2 = pthread_barrier_wait(&barr); // wait before going to the next frontier
 		if (rc2 != 0 && rc2 != PTHREAD_BARRIER_SERIAL_THREAD) {
 		  printf("Could not wait on barrier\n");
 		  exit(-1);
@@ -746,29 +698,26 @@ void *single_thread_synch_blocked_bfs(void *threadarg) // same as previous funct
     }
 
 }
-
-void pthread_synch_blocked_bfs() {  //initilizes threads and components needed for them 
+// Parallel blocked hybrid bfs
+void pthread_hybrid_blocked_bfs() {
  
-  pthread_t threads[NUM_THREADS];
+  pthread_t threads[NUM_THREADS];//initilizes threads
   struct thread_data thread_data_array[NUM_THREADS];
   int rc;
   long t;
 
   if(pthread_barrier_init(&barr, NULL, NUM_THREADS)) {
     printf("Could not create a barrier\n");
-  } 
-
+  }
 
   if (pthread_mutex_init(&lock, NULL)) {
     printf("Could not create a lock\n");
   }
 
-  //printf("-------------------\n");
-
   for (t = 0; t < NUM_THREADS; t++) {
     thread_data_array[t].thread_id = t;
     thread_data_array[t].v = ((int)(N/NUM_THREADS))*t;
-    rc = pthread_create(&threads[t], NULL, single_thread_synch_blocked_bfs, (void*) &thread_data_array[t]);
+    rc = pthread_create(&threads[t], NULL, single_thread_hybrid_blocked_bfs, (void*) &thread_data_array[t]);
     if (rc) {
       printf("ERROR; return code from pthread_create() is %d\n", rc);
       exit(-1);
@@ -782,7 +731,7 @@ void pthread_synch_blocked_bfs() {  //initilizes threads and components needed f
     }
   }
 }
-
+// using one thread for simple bfs
 void *single_thread_bfs(void *threadarg)
 {
   struct thread_data *my_data;
@@ -791,7 +740,6 @@ void *single_thread_bfs(void *threadarg)
   int v = my_data->v;
     // make vertex v visited
     visited[0] = 1;
-    //printf("THREAD (%d) visited NODE (%d)\n", pid,v);
     parents[0] = 0;
     // enqueue vertex v
     if(pid == 0) // the first thread checks the given root
@@ -800,7 +748,7 @@ void *single_thread_bfs(void *threadarg)
 		rear++; // increment rear
     }
 	
-	int rc1 = pthread_barrier_wait(&barr);
+	int rc1 = pthread_barrier_wait(&barr); // wait before going to the next frontier
 		if (rc1 != 0 && rc1 != PTHREAD_BARRIER_SERIAL_THREAD) {
 		  printf("Could not wait on barrier\n");
 		  exit(-1);
@@ -832,10 +780,10 @@ void *single_thread_bfs(void *threadarg)
   pthread_exit(NULL);
 }
 
-
-void pthread_bfs() {  //initilizes threads and components needed for them 
+// Parallel bfs
+void pthread_bfs() {
  
-  pthread_t threads[NUM_THREADS];
+  pthread_t threads[NUM_THREADS]; //initilizes threads
   struct thread_data thread_data_array[NUM_THREADS];
   int rc;
   long t;
@@ -848,9 +796,6 @@ void pthread_bfs() {  //initilizes threads and components needed for them
   if (pthread_mutex_init(&lock, NULL)) {
     printf("Could not create a lock\n");
   }
-
-  //printf("-------------------\n");
-
   for (t = 0; t < NUM_THREADS; t++) {
     thread_data_array[t].thread_id = t;
     thread_data_array[t].v = ((int)(N/NUM_THREADS))*t;
@@ -867,11 +812,9 @@ void pthread_bfs() {  //initilizes threads and components needed for them
       exit(-1);
     }
   }
-
-  //printf("-------------------\n\n");
 }
 
-void initialize_graph(int w)// initializes graph with 1's and 0's with the given percentage w
+void initialize_graph(int w)// initializes graph with 1's and 0's
 {
     int i, j;
     srand(time(0));
@@ -913,7 +856,6 @@ int check_graph() // checks to see if all nodes can be visited
 int get(int i, int j) // makes sure that given two coordinates that our graph is poperly indexed 
 {
 	int val;
-
 	if(i == j)
 		return 0;
 	else
