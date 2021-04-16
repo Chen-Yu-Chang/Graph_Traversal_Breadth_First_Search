@@ -6,7 +6,7 @@
 #include <time.h>
 #include <math.h>
 #include <pthread.h>
-#define N 1024  //Nodes
+#define N 32768  //Nodes
 //initialization
 int visited[N];
 int in[N];
@@ -18,11 +18,11 @@ int out_place = 0;
 int count = 0;
 //Define constants
 #define ALPHA 1024
-#define BETA  16
+#define BETA  64
 #define OPTIONS 5
 #define CPG 2.4  //Adjust to your computer
 #define NUM_THREADS 4
-#define BLOCK_SIZE 2048
+#define BLOCK_SIZE 1024
 
 #define ITERS 25
 
