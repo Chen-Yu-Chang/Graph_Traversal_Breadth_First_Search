@@ -18,7 +18,7 @@ int out_place = 0;
 int count = 0;
 //Define constants
 #define ALPHA 1024
-#define BETA  64
+#define BETA  16
 #define OPTIONS 5
 #define CPG 2.4  //Adjust to your computer
 #define NUM_THREADS 4
