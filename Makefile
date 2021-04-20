@@ -1,4 +1,4 @@
-CC=/usr/local/cuda-8.0/bin/nvcc
+CC=/Graph_Traversal_Breadth_First_Search/
 CFLAGS=-std=c++11 -Xcompiler -fPIC -O3
 
 bfs: $(wildcard *.cu)
