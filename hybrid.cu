@@ -1,449 +1,289 @@
+#include <stdio.h> 
+#include <iostream> 
+#include <fstream> 
+#include <sstream> 
+#include <stdlib.h> 
+#include <string.h> 
+#include <string> 
+#include <omp.h> 
+#include <time.h> 
+#include <cuda.h> 
+#include <limits> 
+#include <vector> 
+#include <cstdlib>
 
-/*
- *   The breadth-first search algorithm
- *
- *   Copyright (C) 2013-2014 by
- *   Cheng Yichao        onesuperclark@gmail.com
- *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
- *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU General Public License for more details.
- */
+//#define DEBUGC //#define TOPDOWN //#define BOTTOMUP
+#define HYBRID
+//#define CHECK_DEPTH_RESULT
+#define ALPHA 128
+using namespace std; 
 
-
-#pragma once
-
-#include <macros.cuh>
-#include <timing.cuh>
-#include <list.cuh>
-#include <log.cuh>
-#include <metrics.cuh>
-#include <hash.cuh>
-#include <cuda_runtime_api.h>
-
-
-namespace morgen {
-
-namespace bfs {
-
-
-
-/**
- * Each vertex(u) in worksetFrom is assigned with a group of threads.
- * Then each thead within a group processes one of u's neigbors
- * at a time. All threads process vertices in SIMD manner.
- *
- * Assume GROUP_S = 32
- * If u has a neigbor number more than 32, each thead within a group will 
- * iterate over them stridedly. e.g. thread 1 will process 1st, 33th, 65th... 
- * vertex in the neighbor list, thread 2 will process 2nd, 34th, 66th...
- */
-template<typename VertexId, 
-         typename SizeT, 
-         typename Value>
-__global__ void
-BFSKernel_hybrid_from_queue_group_map(
-    SizeT     *row_offsets,
-    VertexId  *column_indices,
-    VertexId  *worksetFrom,
-    SizeT     *sizeFrom,
-    Value     *levels,
-    Value     curLevel,
-    int       group_size,
-    float     group_per_block,
-    int       *update)
-{
-
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-
-    int group_offset = tid % group_size;
-    int group_id     = tid / group_size;
-
-
-    // Since the workset can easily exceed 65536, we just let grouped-threads
-    // iterate over a large workset
-    for (int g = group_id; g < *sizeFrom; g += group_per_block * gridDim.x) {
-
-
-        VertexId outNode = worksetFrom[g];
-        SizeT edgeFirst = row_offsets[outNode];
-        SizeT edgeLast = row_offsets[outNode+1];
-
-        // in case the neighbor number > warp size
-        for (SizeT edge = edgeFirst + group_offset; edge < edgeLast; edge += group_size)
-        {
-            
-            VertexId inNode = column_indices[edge];
-            //VertexId inNode = tex1Dfetch(tex_column_indices, edge);
-
-
-            if (levels[inNode] == MORGEN_INF) {
-                levels[inNode] = curLevel + 1;
-                update[inNode] = 1;
-            }
-
-        }
+int ** read_mtx(char*fname){
+  const char* filename_input = fname;
+  string line;
+  string path = "../../data/graphs/"; //path of the graph directory
+  string filename(filename_input);
+  string fullPath = path + filename;
+  char cstr[fullPath.size() + 1];
+  strcpy(cstr, fullPath.c_str());
+  ifstream input (cstr);
+  if(input.fail()) //open file
+    return 0;
+  // int tuplesStartCounter = 0;
+  //pass information part in the file
+  while(getline(input, line)){
+    if(line.at(0) == '%'){
+      continue;
     }
+    else{
+      break;
+    }
+  }
+  //get vertex and edge amount
+  int vertex_amount, max_vertex_id, tuple_amount, edge_amount;
+  stringstream ss(line);
+  ss >> max_vertex_id;
+  ss >> max_vertex_id;
+  ss >> tuple_amount;
+  edge_amount = 2*tuple_amount;
+  vertex_amount = max_vertex_id + 1;
+  #ifdef DEBUG
+  cout << "VA: " << vertex_amount << " EA: " << edge_amount << endl;
+  #endif
+  int **M;
+  M = new int*[tuple_amount];
+  for(int i = 0; i < tuple_amount; i ++) //allocate adjacency matrix
+    M[i] = new int[2]();
+  #ifdef DEBUG
+  cout << "Tuple Matrix is allocated." << endl;
+  #endif
+  int v, w;
+  for(int i = 0; getline(input, line); i++){ //populate adjacency matrix
+    stringstream ss(line);
+    ss >> v;
+    ss >> w;
+    M[i][0] = v;
+    M[i][1] = w;
+  }
+  #ifdef DEBUG
+  cout << "Tuple Matrix is created. Ex. M[0][0] = " << M[0][0] << " M[0][1] = " << M[0][1] << endl;
+  #endif
+  int * V = new int[vertex_amount+1] (); // allocate array for vertices
+  //V[vertex_amount] = edge_amount; // last element will point to the end of the list
+  for(int i = 0; i < tuple_amount; i++){ //counting edge amount per vertex
+    V[M[i][0]+1]++;
+    V[M[i][1]+1]++;
+  }
+  #ifdef DEBUG
+  cout << "Edge amount per vertex counted and stored." << endl;
+  #endif
+  int edgeStart = 0;
+  for(int i = 0; i < vertex_amount; i++ ){ //point vertices to the correct index
+    if(V[i+1] == 0){ //mark the isolated edge
+      V[i] = -1;
+    }
+    else{
+      edgeStart += V[i+1];
+    }
+    V[i+1] = edgeStart; //correct pointers
+  }
+  #ifdef DEBUG
+  cout << "Edge start locations per vertex corrected and isolated edges are marked." << endl;
+  #endif
+  int * A = new int[edgeStart] (); // allocate array for the edges
+  int * AEC = new int[vertex_amount](); // added edge count per vertex
+  for(int i = 0; i < tuple_amount; i++ ){ //construct A
+    A[V[M[i][0]] + AEC[M[i][0]]] = M[i][1]; //put to A
+    A[V[M[i][1]] + AEC[M[i][1]]] = M[i][0]; //put to A
+    AEC[M[i][0]]++; //update count
+    AEC[M[i][1]]++; //update count
+  }
+  #ifdef DEBUG
+  for(int i = max_vertex_id - 1; i < max_vertex_id + 2; i++){
+    cout << "V is constructed. V[" << i << "] = " << V[i] << endl;
+  }
+  /*for(int i = 0; i < edge_amount; i++){
+    cout << "A is constructed. A[V[" << i << "]] = " << A[V[i]] << endl;
+    }*/
+  #endif
+  int ** ret = new int*[3];
+  ret[0] = V;
+  ret[1] = A;
+  ret[2] = new int(max_vertex_id+1);
+  ret[2][1] = edge_amount;
+  return ret;
 }
-
-
-/**
- * use update[] to mask activated[]
- */
-template<typename VertexId, typename SizeT>
-__global__ void
-BFSKernel_hybrid_to_queue_gen_workset(
-    SizeT     max_size,
-    SizeT     *row_offsets,
-    VertexId  *column_indices,
-    int       *update,
-    VertexId  *worksetTo,
-    SizeT     *sizeTo)
-{
-    int tid =  blockIdx.x * blockDim.x + threadIdx.x;
-
-    if (tid < max_size) {
-
-        if (update[tid] == 1) {
-
-            update[tid] = 0;     // clear after activating
-
-            SizeT pos = atomicAdd( (SizeT*) &(*sizeTo), 1 );
-            worksetTo[pos] = tid;
-        }
+__global__ void BottomUp(int num_vertices, int * d_V, int * d_A, int level, int * d_depth, bool * d_still_running, int * d_mu, int * d_mf){
+  
+  int id = threadIdx.x + blockDim.x * blockIdx.x;
+  int total_number_of_threads = blockDim.x*gridDim.x;
+  int start = id;
+#ifdef HYBRID
+  if(id == 0)
+    *d_mf = 0; //reinit edge size in frontier
+#endif
+  
+  __syncthreads();
+  for(int i = start; i < num_vertices; i += total_number_of_threads){ //iterate over vertices
+    if(d_depth[i] == -1 && d_V[i] != -1){ //check if vertex does not have a parent
+      int jend = d_V[i+1];
+      bool notfound = true;
+      for(int k = 2; jend == -1; k++){
+	jend = d_V[i+k];
+      }
+      for(int j = d_V[i]; j < jend && notfound; j++){ //iterate over current vertices neighbors
+	if(d_depth[d_A[j]] == (level - 1)){ //check if current vertex's neighbor is in current array
+	  d_depth[i] = level;
+	  *d_still_running = true;
+	  notfound = false;
+#ifdef HYBRID
+	  //Collect heuristics
+	  int edge_amount = jend - d_V[i];
+	  atomicAdd(d_mf, edge_amount);
+	  atomicAdd(d_mu, -1*edge_amount);
+	  //
+#endif
+	}
+      }
     }
+  }
 }
-
-
-
-
-template<typename VertexId, 
-         typename SizeT, 
-         typename Value>
-__global__ void
-BFSKernel_hybrid_from_hash_group_map(
-  SizeT     *row_offsets,
-  VertexId  *column_indices,
-  VertexId  *workset_from,
-  SizeT     *slot_offsets_from,
-  SizeT     *slot_sizes_from,
-  int       slot_id_from,
-  Value     *levels,
-  Value     curLevel,
-  int       *update,
-  int       group_size,
-  float     group_per_block)
-{
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-
-    int group_offset = tid % group_size;
-    int group_id     = tid / group_size;
-
-
-
-    // group_per_block * gridDim.x = how many groups of threads are spawned 
-    for (int g = group_id; g < slot_sizes_from[slot_id_from]; g += group_per_block * gridDim.x) {
-
-        VertexId outNode = workset_from[slot_offsets_from[slot_id_from] + g];
-        SizeT edgeFirst = row_offsets[outNode];
-        SizeT edgeLast = row_offsets[outNode+1];
-
-        // serial expansion
-        for (SizeT edge = edgeFirst + group_offset; edge < edgeLast; edge += group_size) 
-        {
-
-            VertexId inNode = column_indices[edge];
-
-            if (levels[inNode] == MORGEN_INF) {
-                levels[inNode] = curLevel + 1;
-                update[inNode] = 1;
-            }
-
-        } // edge loop
-
-    }
+__global__ void TopDown(int num_vertices, int * d_V, int * d_A, int level, int * d_depth, bool * d_still_running, int * d_mu, int * d_mf){
+  int id = threadIdx.x + blockDim.x * blockIdx.x;
+  int total_number_of_threads = blockDim.x*gridDim.x;
+  int start = id;
+#ifdef HYBRID
+  if(id == 0)
+    *d_mf = 0; //reinit edge size in frontier
+#endif
+  
+ __syncthreads();
+ for(int i = start; i < num_vertices; i += total_number_of_threads){
+    if(d_depth[i] == (level - 1)){
+      int jend = d_V[i+1];
+      for(int k = 2; jend == -1; k++){ //eliminate isolated vertices
+	jend = d_V[i+k];
+      }
+      for(int j = d_V[i]; j < jend; j++){ //iterate over current vertices neighbors
+	if(d_depth[d_A[j]] == -1){ //check if the neigbor already has a parent
+	  d_depth[d_A[j]] = level; //update depth
+#ifdef HYBRID
+	  //collect hueristics
+	  int aend = d_V[d_A[j]+1];
+	  for(int k = 2; aend == -1; k++){ //eliminate isolated vertices
+	    aend = d_V[d_A[j]+k];
+	  }
+	  int edge_amount = aend - d_V[d_A[j]];
+	  atomicAdd(d_mf, edge_amount);
+	  atomicAdd(d_mu, -1*edge_amount);
+	  //
+#endif
     
+	  *d_still_running = true;
+        }
+      }
+    }
+  }
 }
-
-
-
-/**
- * use update[] to mask activated[]
- */
-template<typename VertexId, typename SizeT>
-__global__ void
-BFSKernel_hybrid_to_hash_gen_workset(
-    SizeT     max_size,
-    SizeT     *row_offsets,
-    VertexId  *column_indices,
-    int       *update,
-    VertexId  *workset_to,
-    SizeT     *slot_offsets_to,
-    VertexId  *slot_sizes_to)
-{
-    int tid =  blockIdx.x * blockDim.x + threadIdx.x;
-
-    if (tid < max_size) {
-
-        if (update[tid] == 1) {
-
-            update[tid] = 0;     // clear after activating
-
-            SizeT outdegree = row_offsets[tid+1] - row_offsets[tid];
-            int hash = log2((float)outdegree);
-            if (hash >= 0) {
-                SizeT pos= atomicAdd( (SizeT*) &(slot_sizes_to[hash]), 1 );
-                workset_to[slot_offsets_to[hash] + pos] = tid;
-            }
-        }
+int main(int argc, char *argv[]){
+  if(argc!=2){
+    printf("Make it work this way: ./<exec> <mtx file>");
+    return 0;
+  }
+  cudaSetDevice(0);
+  int num_threads = 1024;
+  int num_blocks = 128;
+  int * d_depth;
+  int * d_mu;
+  int * d_mf;
+  int * d_V;
+  int * d_A;
+  bool * d_still_running; //Device still running bool
+  int ** graph = read_mtx(argv[1]);
+  int * V = graph[0];
+  int * A = graph[1];
+  int numVertices = graph[2][0];
+  int numEdges = graph[2][1];
+#ifdef DEBUGC
+  printf("The num of vertices is %d \n ", numVertices);
+  printf("The num of edges is %d \n ", numEdges);
+#endif
+  int source_vertex = 1; //(rand() % numVertices)+1;
+  //Host pointers
+  int * depth;
+  int * mu;
+  int * mf;
+  bool * still_running; //Host still running bool
+  int size = (numVertices+1) * sizeof(int);
+  int e_size = numEdges * sizeof(int);
+  cudaMalloc((void **)&d_mu, sizeof(int));
+  cudaMalloc((void **)&d_mf, sizeof(int));
+  cudaMalloc((void **)&d_depth, size);
+  cudaMalloc((void **)&d_V, size);
+  cudaMalloc((void **)&d_A, e_size);
+  cudaMalloc((void **)&d_still_running, e_size);
+  still_running = (bool *)malloc(sizeof(bool));
+  mu = (int *)malloc(sizeof(int));
+  mf = (int *)malloc(sizeof(int));
+  depth = (int *)malloc(size);
+  for(int i=0; i<numVertices; i++){
+    depth[i] = -1;
+  }
+  depth[source_vertex] = 0;
+  *mu = e_size;
+  *mf = 0;
+  
+  cudaError_t rc = cudaMemcpy(d_depth, depth, size, cudaMemcpyHostToDevice);
+  if (rc != cudaSuccess)
+    printf("Could not allocate memory: %d", rc);
+  cudaMemcpy(d_V, V, size, cudaMemcpyHostToDevice);
+  cudaMemcpy(d_A, A, sizeof(int) * numEdges, cudaMemcpyHostToDevice);
+  cudaMemcpy(d_mu, mu, sizeof(int), cudaMemcpyHostToDevice);
+  cudaMemcpy(d_mf, mf, sizeof(int), cudaMemcpyHostToDevice);
+  cudaMemcpy(d_still_running, still_running, sizeof(bool), cudaMemcpyHostToDevice);
+  
+  int level = 1;
+  //Time variables
+  clock_t start, total;
+  start = clock();
+  *still_running = true;
+  
+  while(*still_running)
+  {
+    *still_running = false;
+    cudaMemcpy(d_still_running, still_running, sizeof(bool), cudaMemcpyHostToDevice);
+    //printf("LEVEL: %d, MU: %d, MF: %d, Alpha: %d, Result: %d.\n", level, *mu, *mf, ALPHA, *mf > (*mu / ALPHA));
+#ifdef HYBRID
+    if(*mf > (*mu / ALPHA)){
+      BottomUp<<<num_blocks, num_threads>>>(numVertices, d_V, d_A, level, d_depth, d_still_running, d_mu, d_mf);
     }
-}
-
-
-
-template<typename VertexId, typename SizeT, typename Value>
-void BFSGraph_gpu_hybrid(
-    const graph::CsrGraph<VertexId, SizeT, Value> &g, 
-    VertexId source, 
-    const util::Stats<VertexId, SizeT, Value> &stats,
-    bool instrument,
-    int block_size,
-    bool get_metrics,
-    int  static_group_size,
-    int threshold,
-    int theta,
-    int alpha = 100)
-{
-
-    workset::Hash<VertexId, SizeT, Value>  workset_hash(stats, alpha);
-    workset::Queue<VertexId, SizeT>  workset_queue(g.n);
-
-
-    util::List<Value, SizeT> levels(g.n);
-    levels.all_to((Value) MORGEN_INF);
-
-    workset_queue.init(source); 
-    levels.set(source, 0);
-    util::List<int, SizeT> update(g.n);
-    update.all_to(0);
-
-
-    SizeT worksetSize = 1;
-    SizeT lastWorksetSize = 0;
-    Value curLevel = 0;
-
-    int blockNum;
-
-    printf("GPU topology-aware bfs starts... \n");  
-
-    if (instrument) printf("level\tslot_size\tfrontier_size\tratio\ttime\n");
-
-    float total_millis = 0.0;
-    //float level_millis = 0.0;
-    float queue_expand_millis = 0.0;
-    float queue_compact_millis = 0.0;
-    float hash_expand_millis = 0.0;
-    float hash_compact_millis = 0.0;
-
-    // kernel configuration
-
-    float group_per_block = (float)block_size / 32;
-
-    util::Metrics<VertexId, SizeT, Value> metric;
-
-    util::GpuTimer gpu_timer;
-    util::GpuTimer queue_expand_timer;
-    util::GpuTimer queue_compact_timer;
-    util::GpuTimer hash_expand_timer;
-    util::GpuTimer hash_compact_timer;
-
-    cudaStream_t streams[20];
-    for (int i=0; i<20; i++) {
-        cudaStreamCreate(&streams[i]);
+    else{
+      TopDown<<<num_blocks, num_threads>>>(numVertices, d_V, d_A, level, d_depth, d_still_running, d_mu, d_mf);
     }
-
-    bool last_workset_is_hash = false;
-    gpu_timer.start();
-
-    while (worksetSize > 0) {
-
-        lastWorksetSize = worksetSize;
-
-        if (last_workset_is_hash) {
-
-        ///////////////////////////// hash expand //////////////////////////
-        if (instrument) { hash_expand_timer.start(); }
-
-        for (int i = 0; i < workset_hash.slot_num; i++) {
-
-            int partialWorksetSize = workset_hash.slot_sizes[i];
-            if (partialWorksetSize== 0) continue;
-            int group_size = 0;
-            switch (i) {
-                case 0: group_size = 1; break;
-                case 1: group_size = 2; break;
-                case 2: group_size = 4; break;
-                case 3: group_size = 8; break;
-                case 4: group_size = 16; break;
-                case 5: group_size = 32; break;
-                default: group_size = 32; 
-            }
-
-            while (group_size * partialWorksetSize < threshold) {
-                if (group_size == 32) break;
-                group_size *= 2;
-            }
-
-            float group_per_block = (float)block_size / group_size;
-            blockNum = MORGEN_BLOCK_NUM_SAFE(partialWorksetSize * group_size, block_size);
-            BFSKernel_hybrid_from_hash_group_map<VertexId, SizeT, Value><<<blockNum, block_size, 0, streams[i]>>>(
-                g.d_row_offsets,
-                g.d_column_indices,
-                workset_hash.d_elems,
-                workset_hash.d_slot_offsets,
-                workset_hash.d_slot_sizes,
-                i,                                    
-                levels.d_elems,
-                curLevel,     
-                update.d_elems,
-                group_size,
-                group_per_block);
-        }
-
-        if (util::handleError(cudaThreadSynchronize(), "BFSKernel failed ", __FILE__, __LINE__)) break;
-
-
-        if (instrument) {
-            hash_expand_timer.stop();
-            hash_expand_millis +=  hash_expand_timer.elapsedMillis();
-        }
-
-        ///////////////////////////// hash expand //////////////////////////
-
-        } else {   // last_workset_is_hash
-
-        ///////////////////////////// queue expand //////////////////////////
-        if (instrument) { queue_expand_timer.start(); }
-
-        int blockNum = MORGEN_BLOCK_NUM_SAFE(worksetSize * 32, block_size);
-        BFSKernel_hybrid_from_queue_group_map<VertexId, SizeT, Value><<<blockNum, block_size>>>(
-            g.d_row_offsets,
-            g.d_column_indices,
-            workset_queue.d_elems,
-            workset_queue.d_sizep,
-            levels.d_elems,
-            curLevel,     
-            32,
-            group_per_block,
-            update.d_elems);
-
-        if (util::handleError(cudaThreadSynchronize(), "BFSKernel failed ", __FILE__, __LINE__)) break;
-
-        if (instrument) {
-            queue_expand_timer.stop();
-            queue_expand_millis +=  queue_expand_timer.elapsedMillis();
-            //printf("queue: %d\t%d\n", curLevel, lastWorksetSize);
-        }
-
-        ///////////////////////////// queue expand //////////////////////////
-        
-        } // till here, the next frontier is done, now we decide what is the representation
-
-        ///////////////////////////// hash compaction //////////////////////////
-        if (lastWorksetSize > theta) {
-
-        if (instrument) { hash_compact_timer.start(); }
-
-        workset_hash.clear_slot_sizes();
-
-        blockNum = MORGEN_BLOCK_NUM_SAFE(g.n, block_size);
-        BFSKernel_hybrid_to_hash_gen_workset<<<blockNum, block_size>>> (
-            g.n,
-            g.d_row_offsets,
-            g.d_column_indices,
-            update.d_elems,
-            workset_hash.d_elems,
-            workset_hash.d_slot_offsets,
-            workset_hash.d_slot_sizes);
-
-        if (util::handleError(cudaThreadSynchronize(), "BFSKernel failed ", __FILE__, __LINE__)) break;
-
-        last_workset_is_hash = true;
-
-        worksetSize = workset_hash.sum_slot_size();
-
-        if (instrument) {
-            hash_compact_timer.stop();
-            hash_compact_millis += hash_compact_timer.elapsedMillis();
-            printf("hash: %d\t%d\n", curLevel, lastWorksetSize);
-        }
-
-        ///////////////////////////// hash compaction //////////////////////////
-
-        } else {   // if (lastWorksetSize <= theta)
-
-        ////////////////////////////////// queue compaction ///////////////////////////
-        if (instrument) { queue_compact_timer.start(); }
-
-        workset_queue.clear_size();
-
-        blockNum = MORGEN_BLOCK_NUM_SAFE(g.n, block_size);
-        BFSKernel_hybrid_to_queue_gen_workset<<<blockNum, block_size>>> (
-            g.n,
-            g.d_row_offsets,
-            g.d_column_indices,
-            update.d_elems,
-            workset_queue.d_elems,
-            workset_queue.d_sizep);
-
-        if (util::handleError(cudaThreadSynchronize(), "BFSKernel failed ", __FILE__, __LINE__)) break;
-
-        worksetSize = workset_queue.size();
-        last_workset_is_hash = false;
-        if (instrument) {
-            queue_compact_timer.stop();
-            queue_compact_millis +=  queue_compact_timer.elapsedMillis();
-            printf("queue: %d\t%d\n", curLevel, lastWorksetSize);
-        }
-        ////////////////////////////////// queue compaction ///////////////////////////
-
-        }
-        curLevel += 1;
-    }
-
-    gpu_timer.stop();
-    total_millis = gpu_timer.elapsedMillis();
-
-
-    printf("GPU topo bfs terminates\n");
-    float billion_edges_per_second = (float)g.m / total_millis / 1000000.0;
-    printf("Time(s):\t%f\nSpeed(BE/s):\t%f\n", total_millis / 1000.0, billion_edges_per_second);
-
-
-    if (instrument)
-        printf("Expand: \t%f\t%f\t%f\t%f\n",
-         queue_expand_millis / 1000.0,
-         queue_compact_millis / 1000.0,
-         hash_expand_millis / 1000.0,
-         hash_compact_millis / 1000.0);
-
-    if (get_metrics) metric.display();
-
-
-    levels.print_log();
-    levels.del();
-    update.del();
-    workset_queue.del();
-    workset_hash.del();
+#endif 
+#ifdef BOTTOMUP
+    BottomUp<<<num_blocks, num_threads>>>(numVertices, d_V, d_A, level, d_depth, d_still_running, d_mu, d_mf);
+#endif 
+#ifdef TOPDOWN
+    TopDown<<<num_blocks, num_threads>>>(numVertices, d_V, d_A, level, d_depth, d_still_running, d_mu, d_mf);
+#endif
     
+    cudaDeviceSynchronize();
+    cudaError_t error = cudaGetLastError();
+    if (error != cudaSuccess)
+      printf("Level: %d, Error: %d\n", level, error);
+    cudaMemcpy(still_running, d_still_running, sizeof(bool), cudaMemcpyDeviceToHost);
+    cudaMemcpy(mu, d_mu, sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(mf, d_mf, sizeof(int), cudaMemcpyDeviceToHost);
+    level++;
+  }
+  total = clock() - start;
+  cout << "The total running time is: "<< (float)(total)/CLOCKS_PER_SEC<< " secs" <<endl;
+  #ifdef CHECK_DEPTH_RESULT
+    cudaMemcpy(depth, d_depth, numVertices * sizeof(int), cudaMemcpyDeviceToHost);
+    cout << "DEPTH RESULTS: " << endl;
+    for(int i = 0; i < numVertices; i++){
+      cout << i << ", " << depth[i] << endl;
+    }
+  #endif
 }
-
-
-} // BFS
-} // Morgen
