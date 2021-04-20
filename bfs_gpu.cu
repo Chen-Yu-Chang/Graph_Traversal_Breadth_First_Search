@@ -1,237 +1,327 @@
-
-#include "cuda_runtime.h"
-#include "device_launch_parameters.h"
-
-#include <stdlib.h>
 #include <stdio.h>
-#include <queue>
-#include <thrust/host_vector.h>
-#include <thrust/device_vector.h>
+#include <stdlib.h>
+#include <math.h>
 #include <time.h>
+#include <string.h>
 
-const int MAX_NODES = 1632803 + 1;
-const int MAX_EDGES = 30622564 + 1;
-int no_of_nodes;
-int no_of_edges;
-const int THREADS_PER_BLOCK = 512;
+#define TIMER_CREATE(t)             \
+	cudaEvent_t t##_start, t##_end;     \
+	cudaEventCreate(&t##_start);        \
+	cudaEventCreate(&t##_end);               
+ 
+ 
+#define TIMER_START(t)                \
+	cudaEventRecord(t##_start);         \
+	cudaEventSynchronize(t##_start);    \
+ 
+ 
+#define TIMER_END(t)                             \
+	cudaEventRecord(t##_end);                      \
+	cudaEventSynchronize(t##_end);                 \
+	cudaEventElapsedTime(&t, t##_start, t##_end);  \
+	cudaEventDestroy(t##_start);                   \
+	cudaEventDestroy(t##_end);     
+  
 
-struct Node {
-	int start;
-	int no_of_edges;
-};
-
-// explore neighbours of every vertex from the current level
-__global__ void bfs(Node* dev_graph,
-	bool* dev_frontier,
-	bool* dev_update,
-	bool* dev_visited,
-	int* dev_edge_list,
-	int* dev_cost,
-	int* dev_MAX_NODES)
+//Function to check for errors
+inline cudaError_t checkCuda(cudaError_t result) 
 {
-	int tid = threadIdx.x + blockIdx.x * blockDim.x;
+	#if defined(DEBUG) || defined(_DEBUG)
+		if (result != cudaSuccess) {
+			fprintf(stderr, "CUDA Runtime Error: %s\n", cudaGetErrorString(result));
+			exit(-1);
+		}
+	#endif
+	return result;
+}
 
-	if (tid < *dev_MAX_NODES && dev_frontier[tid]) {
-		dev_frontier[tid] = 0;
-		for (int i = 0; i < dev_graph[tid].no_of_edges; ++i) {
-			int nid = dev_edge_list[i + dev_graph[tid].start];
-			if (!dev_visited[nid]) {
-				dev_cost[nid] = dev_cost[tid] + 1;
-				dev_update[nid] = 1;
+//Number of Vertices
+#define vertices 5000 
+
+//Number of Edges per Vertex
+#define Edge_per_node 4500
+
+//Used to define the weight of each edge
+#define Maximum_weight 5
+
+//Setting a value to infinity
+#define infinity 10000000
+
+//Kernel Call to initialize the values of the node weights to infinity except for the Source Node which is set to 0
+//We mark the source Node to be settled after that and all other nodes unsettled
+__global__ void Initializing(int *node_weight_array, int *mask_array, int Source) // CUDA kernel
+{
+	int id = blockIdx.x*blockDim.x+threadIdx.x; // Get global thread ID
+	if(id<vertices)
+	{
+		if(id==Source)
+		{
+			node_weight_array[id]=0;
+			mask_array[id]=0;
+		}
+		else
+		{
+			node_weight_array[id]=infinity;
+			mask_array[id]=0;
+		}
+	}
+}
+
+//Kernel Call to choose the node with  minimum node weight whose edges are to be relaxed
+__global__ void Minimum(int *mask_array,int *vertex_array,int *node_weight_array, int *edge_array, int *edge_weight_array, int *min)
+{
+	int id = blockIdx.x*blockDim.x+threadIdx.x; // Get global thread ID
+	if(id<vertices)
+	{
+		if(mask_array[id]!=1 && node_weight_array[id]<infinity)
+		{
+			atomicMin(&min[0],node_weight_array[id]);
+		}
+	}		
+}
+
+//Kernel call to relax all the edges of a node
+__global__ void Relax(int *mask_array,int *vertex_array,int *node_weight_array, int *edge_array, int *edge_weight_array, int *min)
+{
+	int id = blockIdx.x*blockDim.x+threadIdx.x; // Get global thread ID
+	
+	//Iterative variable
+	int m,n;
+
+	if(id<vertices)
+	{
+		if(mask_array[id]!=1 && node_weight_array[id]==min[0])
+		{
+			mask_array[id]=1;
+			for(m=id*Edge_per_node;m<id*Edge_per_node+Edge_per_node;m++)	
+			{
+				n=edge_array[m];
+				atomicMin(&node_weight_array[n],node_weight_array[id]+edge_weight_array[m]);
 			}
 		}
-	}
+	}	
 }
 
-// mark the new explored vertices as the new frontier
-__global__ void bfs_update(Node* dev_graph,
-	bool* dev_frontier,
-	bool* dev_update,
-	bool* dev_visited,
-	int* dev_edge_list,
-	int* dev_cost,
-	int* dev_MAX_NODES,
-	bool* finish)
+
+int main( int argc, char* argv[] )
 {
 
-	int tid = threadIdx.x + blockIdx.x * blockDim.x;
-	if (tid < *dev_MAX_NODES && dev_update[tid]) {
-		dev_update[tid] = 0;
-		dev_frontier[tid] = 1;
-		dev_visited[tid] = 1;
-		*finish = true;
+	//Size of the Vertex array
+	size_t vertex_array_size = vertices*sizeof(int);
+	
+	//Size of the edge array and edge_weight array
+	size_t edge_array_size = vertices*Edge_per_node*sizeof(int);
+
+	//Intializing the vertex array
+	int *vertex_array = (int*)malloc(vertex_array_size); 
+
+	//Initializing a copy of the vertex array
+	int *vertex_copy = (int*)malloc(vertex_array_size); 
+
+	//Intializing the edge array
+	int *edge_array=(int*)malloc(edge_array_size);
+
+	//Initializing edge_weight_array which stores the weights of each edge
+	int *edge_weight_array = (int*)malloc(edge_array_size);
+
+	//Initializing Node weight array which stores the value for the current weight to reach the node
+	int *node_weight_array = (int*)malloc(vertex_array_size);
+
+	//Array to mark if a node is settled or not
+	int *mask_array = (int*)malloc(vertex_array_size);
+
+	//Iterative operator
+	int i,j,k;  
+
+	printf("Initializing Verte Array...\n");
+
+	//Setting node number in vertex_array
+	for(i=0;i<vertices;i++)
+	{
+		vertex_array[i]=i;
 	}
-}
+	
+	//Setting the RNG seed to system clock
+	srand(time(NULL));
 
-Node graph[MAX_NODES];
-bool frontier[MAX_NODES];
-bool update[MAX_NODES];
-bool visited[MAX_NODES];
-int edge_list[MAX_EDGES];
-int cost[MAX_NODES];
+	//temp variable
+	int temp;
 
-Node* dev_graph;
-bool* dev_frontier;
-bool* dev_update;
-bool* dev_visited;
-int* dev_edge_list;
-int* dev_cost;
-int* dev_nodes;
-bool* dev_finish;
+	printf("Initializing Edge Array...\n");
+	
+	//Adding random edges to each node
+	memcpy(vertex_copy,vertex_array,vertex_array_size);
+	for(i=0;i<vertices;i++)
+	{
+		for(j=vertices-1;j>0;j--)
+		{		
+			k=rand()%(j+1);
+			temp = vertex_copy[j];
+			vertex_copy[j]=vertex_copy[k];
+			vertex_copy[k]=temp;
+		}
 
-
-std::vector<int> adj[MAX_NODES];
-bool host_vis[MAX_NODES];
-int host_cost[MAX_NODES];
-int source = 1;
-
-
-// bfs on cpu
-void host_bfs() {
-	std::queue<int> Q;
-	Q.push(source);
-	host_vis[source] = 1;
-	while (!Q.empty()) {
-		int now = Q.front(); Q.pop();
-		int sz = adj[now].size();
-		for (int i = 0; i < (int)adj[now].size(); ++i) {
-			int child = adj[now][i];
-			if (!host_vis[child]) {
-				host_vis[child] = 1;
-				host_cost[child] = host_cost[now] + 1;
-				Q.push(child);
+		for(j=0;j<Edge_per_node;j++)
+		{
+			if(vertex_copy[j]==i)
+			{
+				j=j+1;
+				edge_array[i*Edge_per_node+(j-1)]= vertex_copy[j];			
+			}
+			else
+			{
+				edge_array[i*Edge_per_node+j]= vertex_copy[j];			
 			}
 		}
-	}
-}
 
-void Free()
-{
-	cudaFree(dev_graph);
-	cudaFree(dev_frontier);
-	cudaFree(dev_update);
-	cudaFree(dev_visited);
-	cudaFree(dev_edge_list);
-	cudaFree(dev_cost);
-	cudaFree(dev_nodes);
-	cudaFree(dev_finish);
-}
-
-int main()
-{
-
-
-	for (int i = 0; i < MAX_NODES; ++i) {
-		graph[i].start = -1;
-		frontier[i] = update[i] = visited[i] = host_cost[i] = 0;
 	}
 
-	cost[source] = 0;
-	frontier[source] = true;
-	visited[source] = true;
-
-
-	FILE* fp = fopen("sample1.txt", "r");
-	if (!fp) {
-		printf("CANT OPEN THE FILE!!");
+/*	
+	//Can be uncommented to see the edges of each node
+	printf("=== Initial edges===\n");
+	for(i=0;i<vertices*Edge_per_node;i++)
+	{
+		printf("E[%d]= %d\n",i,edge_array[i]);
 	}
+*/	
 
-	int x, y;
-	int i = 0;
-	// reading the file, it may take up to 1 min
-	while (fscanf(fp, "%d %d", &x, &y) != EOF) {
-		if (i == 0) {
-			no_of_nodes = x;
-			no_of_edges = y;
-			i++;
-			continue;
-		}
-		if (graph[x].start == -1)
-			graph[x].start = i;
-		graph[x].no_of_edges++;
-		edge_list[i] = y;
-		i++;
-		adj[x].push_back(y);
-	}
+	printf("Initializing weights of each edge...\n");
 
-
-
-	fclose(fp);
-	printf("host started!\n");
-
-	clock_t cpu_start, cpu_end;
-	float cpu_time = 0;
-	cpu_start = clock();
-
-	host_bfs();
-
-	cpu_end = clock();
-	cpu_time = 1000.0 *  (cpu_end - cpu_start) / (1.0 * CLOCKS_PER_SEC);
-
-	printf("host ended!, time = %f ms\n", cpu_time);
-
-	// allocate in GPU
-	cudaMalloc((void**)&dev_graph, MAX_NODES * sizeof(Node));
-	cudaMalloc((void**)&dev_frontier, MAX_NODES * sizeof(bool));
-	cudaMalloc((void**)&dev_update, MAX_NODES * sizeof(bool));
-	cudaMalloc((void**)&dev_visited, MAX_NODES * sizeof(bool));
-	cudaMalloc((void**)&dev_edge_list, MAX_EDGES * sizeof(int));
-	cudaMalloc((void**)&dev_cost, MAX_NODES * sizeof(int));
-	cudaMalloc((void**)&dev_nodes, sizeof(int));
-
-	// copying to GPU
-	cudaMemcpy(dev_graph, graph, MAX_NODES * sizeof(Node), cudaMemcpyHostToDevice);
-	cudaMemcpy(dev_frontier, frontier, MAX_NODES * sizeof(bool), cudaMemcpyHostToDevice);
-	cudaMemcpy(dev_update, update, MAX_NODES * sizeof(bool), cudaMemcpyHostToDevice);
-	cudaMemcpy(dev_visited, visited, MAX_NODES * sizeof(bool), cudaMemcpyHostToDevice);
-	cudaMemcpy(dev_cost, cost, MAX_NODES * sizeof(int), cudaMemcpyHostToDevice);
-	cudaMemcpy(dev_edge_list, edge_list, MAX_EDGES * sizeof(int), cudaMemcpyHostToDevice);
-	cudaMemcpy(dev_nodes, &MAX_NODES, sizeof(int), cudaMemcpyHostToDevice);
-
-	dim3 block((int)ceil((no_of_nodes) / (1.0 * THREADS_PER_BLOCK)), 1, 1);
-	dim3 thread(THREADS_PER_BLOCK, 1, 1);
-
-
-	cudaMalloc((void**)&dev_finish, sizeof(bool));
-
-	printf("DEVICE STARTED\n");
-
-	cudaEvent_t start, end; float time;
-	cudaEventCreate(&start);
-	cudaEventCreate(&end);
-
-	cudaEventRecord(start, 0);
-
-	bool stop = true;
-	while (stop) {
-
-		stop = false;
-		cudaMemcpy(dev_finish, &stop, sizeof(bool), cudaMemcpyHostToDevice);
-		bfs << <block, thread >> > (dev_graph, dev_frontier, dev_update, dev_visited, dev_edge_list, dev_cost, dev_nodes);
-		cudaDeviceSynchronize();
-		bfs_update << <block, thread >> > (dev_graph, dev_frontier, dev_update, dev_visited, dev_edge_list, dev_cost, dev_nodes, dev_finish);
-		cudaDeviceSynchronize();
-		cudaMemcpy(&stop, dev_finish, sizeof(bool), cudaMemcpyDeviceToHost);
-	}
-	cudaEventRecord(end, 0);
-	cudaEventSynchronize(end);
-	cudaEventElapsedTime(&time, start, end);
-	cudaEventDestroy(start);
-	cudaEventDestroy(end);
-
-	printf("DEVICE FINISHED, time = %f ms\n", time);
-	cudaMemcpy(cost, dev_cost, MAX_NODES * sizeof(int), cudaMemcpyDeviceToHost);
-	system("pause");
-
-	Free();
-
-	// testing the results
-	for (int i = 0; i < MAX_NODES; ++i) {
-		if (cost[i] != host_cost[i]) {
-			printf("%d %d for %d\n", cost[i], host_cost[i], i);
-			system("pause");
+	//Adding weights to the edge_weight array
+	for(i=0;i<vertices;i++)
+	{
+		int a = rand()%Maximum_weight+1;
+		int b = rand()%Maximum_weight+1;
+		for(j=0;j<Edge_per_node;j++)
+		{
+			edge_weight_array[i*Edge_per_node+j]=a+j*b;
 		}
 	}
+
+/*	
+	//Can be uncommented to check the weight of each edge
+	printf("=== Initial edge weight weight===\n");
+	for(i=0;i<vertices*Edge_per_node;i++)
+	{
+		printf("W[%d]= %d\n",i,edge_weight_array[i]);
+	}
+*/
+
+	//Initializing gpu variables
+	int *gpu_vertex_array;
+	int *gpu_edge_array;
+	int *gpu_edge_weight_array;
+	int *gpu_node_weight_array;
+	int *gpu_mask_array;
+
+	checkCuda(cudaMalloc(&gpu_vertex_array,vertex_array_size));
+	checkCuda(cudaMalloc(&gpu_node_weight_array,vertex_array_size));
+	checkCuda(cudaMalloc(&gpu_mask_array,vertex_array_size));
+	checkCuda(cudaMalloc(&gpu_edge_array,edge_array_size));
+	checkCuda(cudaMalloc(&gpu_edge_weight_array,edge_array_size));
+
+	//Copying memory from Host to Device	
+	checkCuda(cudaMemcpy(gpu_vertex_array,vertex_array,vertex_array_size,cudaMemcpyHostToDevice));
+	checkCuda(cudaMemcpy(gpu_node_weight_array,node_weight_array,vertex_array_size,cudaMemcpyHostToDevice));
+	checkCuda(cudaMemcpy(gpu_mask_array,mask_array,vertex_array_size,cudaMemcpyHostToDevice));
+	checkCuda(cudaMemcpy(gpu_edge_array,edge_array,edge_array_size,cudaMemcpyHostToDevice));
+	checkCuda(cudaMemcpy(gpu_edge_weight_array,edge_weight_array,edge_array_size,cudaMemcpyHostToDevice));
+
+	//Declaring the block and grid size
+	int blockSize, gridSize;
+	blockSize=1024;
+	gridSize = (int)ceil((float)vertices/blockSize); // Number of thread blocks in grid
+
+	//Start Timer
+	float start_time;
+	TIMER_CREATE(start_time);
+	TIMER_START(start_time);
+
+
+	//Kernel Call for initializating of the node weights array
+	Initializing<<<gridSize, blockSize>>>(gpu_node_weight_array,gpu_mask_array, 0);
+	cudaError_t err = cudaGetLastError();
+	if (err != cudaSuccess) checkCuda(cudaMemcpy(node_weight_array,gpu_node_weight_array,vertex_array_size,cudaMemcpyDeviceToHost));
+	{
+		printf("Error: %s\n", cudaGetErrorString(err));
+	}
+
+/*	
+	//Can be Uncommented too check the initial node weight of each node
+	checkCuda(cudaMemcpy(node_weight_array,gpu_node_weight_array,vertex_array_size,cudaMemcpyDeviceToHost));	
+	printf("=== Initial node weight===\n");
+	for(i=0;i<vertices;i++)
+	{
+		printf("NW[%d]= %d\n ",i,node_weight_array[i]);
+	}
+*/
+
+	//Initial value of min which stores the minimum node weight in each iteration of relax.
+	int *min=(int*)malloc(2*sizeof(int));
+	min[0]=0;
+	min[1]=0;
+
+	//GPU variable to store the minimum value
+	int *gpu_min;
+	checkCuda(cudaMalloc((void**)&gpu_min,2*sizeof(int)));
+
+	while(min[0]<infinity)
+	{
+		min[0] = infinity;
+		checkCuda(cudaMemcpy(gpu_min,min,sizeof(int),cudaMemcpyHostToDevice));
+
+		Minimum<<<gridSize, blockSize>>>(gpu_mask_array,gpu_vertex_array,gpu_node_weight_array,gpu_edge_array,gpu_edge_weight_array,gpu_min);
+		if (err != cudaSuccess) checkCuda(cudaMemcpy(node_weight_array,gpu_node_weight_array,vertex_array_size,cudaMemcpyDeviceToHost));
+		{
+			printf("Error: %s\n", cudaGetErrorString(err));
+		}
+		
+		Relax<<<gridSize, blockSize>>>(gpu_mask_array,gpu_vertex_array,gpu_node_weight_array,gpu_edge_array,gpu_edge_weight_array,gpu_min);
+		if (err != cudaSuccess) checkCuda(cudaMemcpy(node_weight_array,gpu_node_weight_array,vertex_array_size,cudaMemcpyDeviceToHost));
+		{
+			printf("Error: %s\n", cudaGetErrorString(err));
+		}
+		checkCuda(cudaMemcpy(node_weight_array,gpu_node_weight_array,vertex_array_size,cudaMemcpyDeviceToHost));
+
+/*	
+		//Can be uncommented to see the node weights after each iteration and/or to see the algorithm move step by step	
+		printf("=== %d node weight===\n",count);
+		for(i=0;i<vertices;i++)
+		{
+			printf("NW[%d]= %d\n ",i,node_weight_array[i]);
+		}
+*/			
+
+		checkCuda(cudaMemcpy(min,gpu_min,2*sizeof(int),cudaMemcpyDeviceToHost));	
+	}
+
+	//copying the final node weights from device to host
+	checkCuda(cudaMemcpy(node_weight_array,gpu_node_weight_array,vertex_array_size,cudaMemcpyDeviceToHost));
+
+	//Stop Timer
+	TIMER_END(start_time);
+	printf("Kernel Execution Time: %f ms\n", start_time);
+
+/*	
+	//Can be uncommented to see the final node weights of the settled graph. i.e. the shortest distance from Source to all the nodes
+	printf("=== Final node weight===\n");
+	for(i=0;i<vertices;i++)
+	{
+		printf("NW[%d]= %d\n ",i,node_weight_array[i]);
+	}
+*/
+
+	cudaFree(gpu_vertex_array);
+	cudaFree(gpu_node_weight_array);
+	cudaFree(gpu_edge_array);
+	cudaFree(gpu_edge_weight_array);
+	cudaFree(gpu_mask_array);
+
+	free(vertex_array);
+	free(node_weight_array);
+	free(edge_array);
+	free(edge_weight_array);
+	free(mask_array);
+
 	return 0;
 }
-
