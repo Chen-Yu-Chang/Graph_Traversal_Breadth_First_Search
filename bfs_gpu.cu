@@ -1,155 +1,237 @@
 
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
-#include <cuda.h>
-#include <device_functions.h>
-#include <cuda_runtime_api.h>
 
-#include <stdio.h>
 #include <stdlib.h>
-#include <math.h>
-#include <conio.h>
-#define NUM_NODES 5
+#include <stdio.h>
+#include <queue>
+#include <thrust/host_vector.h>
+#include <thrust/device_vector.h>
+#include <time.h>
 
-typedef struct
+const int MAX_NODES = 1632803 + 1;
+const int MAX_EDGES = 30622564 + 1;
+int no_of_nodes;
+int no_of_edges;
+const int THREADS_PER_BLOCK = 512;
+
+struct Node {
+	int start;
+	int no_of_edges;
+};
+
+// explore neighbours of every vertex from the current level
+__global__ void bfs(Node* dev_graph,
+	bool* dev_frontier,
+	bool* dev_update,
+	bool* dev_visited,
+	int* dev_edge_list,
+	int* dev_cost,
+	int* dev_MAX_NODES)
 {
-	int start;     // Index of first adjacent node in Ea	
-	int length;    // Number of adjacent nodes 
-} Node;
+	int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
-__global__ void CUDA_BFS_KERNEL(Node *Va, int *Ea, bool *Fa, bool *Xa, int *Ca,bool *done)
-{
-
-	int id = threadIdx.x + blockIdx.x * blockDim.x;
-	if (id > NUM_NODES)
-		*done = false;
-
-
-	if (Fa[id] == true && Xa[id] == false)
-	{
-		printf("%d ", id); //This printf gives the order of vertices in BFS	
-		Fa[id] = false;
-		Xa[id] = true;
-		__syncthreads(); 
-		int k = 0;
-		int i;
-		int start = Va[id].start;
-		int end = start + Va[id].length;
-		for (int i = start; i < end; i++) 
-		{
-			int nid = Ea[i];
-
-			if (Xa[nid] == false)
-			{
-				Ca[nid] = Ca[id] + 1;
-				Fa[nid] = true;
-				*done = false;
+	if (tid < *dev_MAX_NODES && dev_frontier[tid]) {
+		dev_frontier[tid] = 0;
+		for (int i = 0; i < dev_graph[tid].no_of_edges; ++i) {
+			int nid = dev_edge_list[i + dev_graph[tid].start];
+			if (!dev_visited[nid]) {
+				dev_cost[nid] = dev_cost[tid] + 1;
+				dev_update[nid] = 1;
 			}
-
 		}
-
 	}
-
 }
 
-// The BFS frontier corresponds to all the nodes being processed at the current level.
+// mark the new explored vertices as the new frontier
+__global__ void bfs_update(Node* dev_graph,
+	bool* dev_frontier,
+	bool* dev_update,
+	bool* dev_visited,
+	int* dev_edge_list,
+	int* dev_cost,
+	int* dev_MAX_NODES,
+	bool* finish)
+{
 
+	int tid = threadIdx.x + blockIdx.x * blockDim.x;
+	if (tid < *dev_MAX_NODES && dev_update[tid]) {
+		dev_update[tid] = 0;
+		dev_frontier[tid] = 1;
+		dev_visited[tid] = 1;
+		*finish = true;
+	}
+}
+
+Node graph[MAX_NODES];
+bool frontier[MAX_NODES];
+bool update[MAX_NODES];
+bool visited[MAX_NODES];
+int edge_list[MAX_EDGES];
+int cost[MAX_NODES];
+
+Node* dev_graph;
+bool* dev_frontier;
+bool* dev_update;
+bool* dev_visited;
+int* dev_edge_list;
+int* dev_cost;
+int* dev_nodes;
+bool* dev_finish;
+
+
+std::vector<int> adj[MAX_NODES];
+bool host_vis[MAX_NODES];
+int host_cost[MAX_NODES];
+int source = 1;
+
+
+// bfs on cpu
+void host_bfs() {
+	std::queue<int> Q;
+	Q.push(source);
+	host_vis[source] = 1;
+	while (!Q.empty()) {
+		int now = Q.front(); Q.pop();
+		int sz = adj[now].size();
+		for (int i = 0; i < (int)adj[now].size(); ++i) {
+			int child = adj[now][i];
+			if (!host_vis[child]) {
+				host_vis[child] = 1;
+				host_cost[child] = host_cost[now] + 1;
+				Q.push(child);
+			}
+		}
+	}
+}
+
+void Free()
+{
+	cudaFree(dev_graph);
+	cudaFree(dev_frontier);
+	cudaFree(dev_update);
+	cudaFree(dev_visited);
+	cudaFree(dev_edge_list);
+	cudaFree(dev_cost);
+	cudaFree(dev_nodes);
+	cudaFree(dev_finish);
+}
 
 int main()
 {
 
 
+	for (int i = 0; i < MAX_NODES; ++i) {
+		graph[i].start = -1;
+		frontier[i] = update[i] = visited[i] = host_cost[i] = 0;
+	}
 
-
-	 Node node[NUM_NODES];
-	
-	
-	//int edgesSize = 2 * NUM_NODES;
-	int edges[NUM_NODES];
-
-	node[0].start = 0;
-	node[0].length = 2;
-
-	node[1].start = 2;
-	node[1].length = 1;
-
-	node[2].start = 3;
-	node[2].length = 1;
-
-	node[3].start = 4;
-	node[3].length = 1;
-
-	node[4].start = 5;
-	node[4].length = 0;
-
-	edges[0] = 1;
-	edges[1] = 2;	
-	edges[2] = 4;
-	edges[3] = 3;
-	edges[4] = 4;
-
-	bool frontier[NUM_NODES] = { false };
-	bool visited[NUM_NODES] = { false };
-	int cost[NUM_NODES] = { 0 };
-
-	int source = 0;
+	cost[source] = 0;
 	frontier[source] = true;
-
-	Node* Va;
-	cudaMalloc((void**)&Va, sizeof(Node)*NUM_NODES);
-	cudaMemcpy(Va, node, sizeof(Node)*NUM_NODES, cudaMemcpyHostToDevice);
-
-	int* Ea;
-	cudaMalloc((void**)&Ea, sizeof(Node)*NUM_NODES);
-	cudaMemcpy(Ea, edges, sizeof(Node)*NUM_NODES, cudaMemcpyHostToDevice);
-
-	bool* Fa;
-	cudaMalloc((void**)&Fa, sizeof(bool)*NUM_NODES);
-	cudaMemcpy(Fa, frontier, sizeof(bool)*NUM_NODES, cudaMemcpyHostToDevice);
-
-	bool* Xa;
-	cudaMalloc((void**)&Xa, sizeof(bool)*NUM_NODES);
-	cudaMemcpy(Xa, visited, sizeof(bool)*NUM_NODES, cudaMemcpyHostToDevice);
-
-	int* Ca;
-	cudaMalloc((void**)&Ca, sizeof(int)*NUM_NODES);
-	cudaMemcpy(Ca, cost, sizeof(int)*NUM_NODES, cudaMemcpyHostToDevice);
-
-	
-
-	int num_blks = 1;
-	int threads = 5;
+	visited[source] = true;
 
 
+	FILE* fp = fopen("sample1.txt", "r");
+	if (!fp) {
+		printf("CANT OPEN THE FILE!!");
+	}
 
-	bool done;
-	bool* d_done;
-	cudaMalloc((void**)&d_done, sizeof(bool));
-	printf("\n\n");
-	int count = 0;
-
-	printf("Order: \n\n");
-	do {
-		count++;
-		done = true;
-		cudaMemcpy(d_done, &done, sizeof(bool), cudaMemcpyHostToDevice);
-		CUDA_BFS_KERNEL <<<num_blks, threads >>>(Va, Ea, Fa, Xa, Ca,d_done);
-		cudaMemcpy(&done, d_done , sizeof(bool), cudaMemcpyDeviceToHost);
-
-	} while (!done);
+	int x, y;
+	int i = 0;
+	// reading the file, it may take up to 1 min
+	while (fscanf(fp, "%d %d", &x, &y) != EOF) {
+		if (i == 0) {
+			no_of_nodes = x;
+			no_of_edges = y;
+			i++;
+			continue;
+		}
+		if (graph[x].start == -1)
+			graph[x].start = i;
+		graph[x].no_of_edges++;
+		edge_list[i] = y;
+		i++;
+		adj[x].push_back(y);
+	}
 
 
 
+	fclose(fp);
+	printf("host started!\n");
 
-	cudaMemcpy(cost, Ca, sizeof(int)*NUM_NODES, cudaMemcpyDeviceToHost);
-	
-	printf("Number of times the kernel is called : %d \n", count);
+	clock_t cpu_start, cpu_end;
+	float cpu_time = 0;
+	cpu_start = clock();
+
+	host_bfs();
+
+	cpu_end = clock();
+	cpu_time = 1000.0 *  (cpu_end - cpu_start) / (1.0 * CLOCKS_PER_SEC);
+
+	printf("host ended!, time = %f ms\n", cpu_time);
+
+	// allocate in GPU
+	cudaMalloc((void**)&dev_graph, MAX_NODES * sizeof(Node));
+	cudaMalloc((void**)&dev_frontier, MAX_NODES * sizeof(bool));
+	cudaMalloc((void**)&dev_update, MAX_NODES * sizeof(bool));
+	cudaMalloc((void**)&dev_visited, MAX_NODES * sizeof(bool));
+	cudaMalloc((void**)&dev_edge_list, MAX_EDGES * sizeof(int));
+	cudaMalloc((void**)&dev_cost, MAX_NODES * sizeof(int));
+	cudaMalloc((void**)&dev_nodes, sizeof(int));
+
+	// copying to GPU
+	cudaMemcpy(dev_graph, graph, MAX_NODES * sizeof(Node), cudaMemcpyHostToDevice);
+	cudaMemcpy(dev_frontier, frontier, MAX_NODES * sizeof(bool), cudaMemcpyHostToDevice);
+	cudaMemcpy(dev_update, update, MAX_NODES * sizeof(bool), cudaMemcpyHostToDevice);
+	cudaMemcpy(dev_visited, visited, MAX_NODES * sizeof(bool), cudaMemcpyHostToDevice);
+	cudaMemcpy(dev_cost, cost, MAX_NODES * sizeof(int), cudaMemcpyHostToDevice);
+	cudaMemcpy(dev_edge_list, edge_list, MAX_EDGES * sizeof(int), cudaMemcpyHostToDevice);
+	cudaMemcpy(dev_nodes, &MAX_NODES, sizeof(int), cudaMemcpyHostToDevice);
+
+	dim3 block((int)ceil((no_of_nodes) / (1.0 * THREADS_PER_BLOCK)), 1, 1);
+	dim3 thread(THREADS_PER_BLOCK, 1, 1);
 
 
-	printf("\nCost: ");
-	for (int i = 0; i<NUM_NODES; i++)
-		printf( "%d    ", cost[i]);
-	printf("\n");
-	_getch();
-	
+	cudaMalloc((void**)&dev_finish, sizeof(bool));
+
+	printf("DEVICE STARTED\n");
+
+	cudaEvent_t start, end; float time;
+	cudaEventCreate(&start);
+	cudaEventCreate(&end);
+
+	cudaEventRecord(start, 0);
+
+	bool stop = true;
+	while (stop) {
+
+		stop = false;
+		cudaMemcpy(dev_finish, &stop, sizeof(bool), cudaMemcpyHostToDevice);
+		bfs << <block, thread >> > (dev_graph, dev_frontier, dev_update, dev_visited, dev_edge_list, dev_cost, dev_nodes);
+		cudaDeviceSynchronize();
+		bfs_update << <block, thread >> > (dev_graph, dev_frontier, dev_update, dev_visited, dev_edge_list, dev_cost, dev_nodes, dev_finish);
+		cudaDeviceSynchronize();
+		cudaMemcpy(&stop, dev_finish, sizeof(bool), cudaMemcpyDeviceToHost);
+	}
+	cudaEventRecord(end, 0);
+	cudaEventSynchronize(end);
+	cudaEventElapsedTime(&time, start, end);
+	cudaEventDestroy(start);
+	cudaEventDestroy(end);
+
+	printf("DEVICE FINISHED, time = %f ms\n", time);
+	cudaMemcpy(cost, dev_cost, MAX_NODES * sizeof(int), cudaMemcpyDeviceToHost);
+	system("pause");
+
+	Free();
+
+	// testing the results
+	for (int i = 0; i < MAX_NODES; ++i) {
+		if (cost[i] != host_cost[i]) {
+			printf("%d %d for %d\n", cost[i], host_cost[i], i);
+			system("pause");
+		}
+	}
+	return 0;
 }
+
