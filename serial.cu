@@ -17,10 +17,10 @@
 
 #pragma once
 
-#include <morgen/utils/macros.cuh>
-#include <morgen/utils/timing.cuh>
-#include <morgen/utils/list.cuh>
-#include <morgen/workset/queue.cuh>
+#include <macros.cuh>
+#include <timing.cuh>
+#include <list.cuh>
+#include <queue.cuh>
 #include <deque>
 
 

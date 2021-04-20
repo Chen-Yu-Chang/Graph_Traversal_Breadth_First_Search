@@ -19,12 +19,12 @@
 
 #pragma once
 
-#include <morgen/utils/macros.cuh>
-#include <morgen/utils/timing.cuh>
-#include <morgen/utils/list.cuh>
-#include <morgen/utils/log.cuh>
-#include <morgen/utils/metrics.cuh>
-#include <morgen/workset/hash.cuh>
+#include <macros.cuh>
+#include <timing.cuh>
+#include <list.cuh>
+#include <log.cuh>
+#include <metrics.cuh>
+#include <hash.cuh>
 #include <cuda_runtime_api.h>
 
 
