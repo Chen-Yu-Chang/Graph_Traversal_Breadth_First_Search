@@ -64,7 +64,7 @@ int main() {
 	int j = 0;
 	int len;
 
-	populate_random(graph_nodes, graph_edge, graph_mask, updating_graph_mask, graph_visited, h_graph_visited);
+	void populate_random(graph_nodes, graph_edge, graph_mask, updating_graph_mask, graph_visited, h_graph_visited);
 	// populate_known(graph_nodes, graph_edge, graph_mask, updating_graph_mask,graph_visited, h_graph_visited);
 
 	// Create the cuda events
@@ -244,7 +244,7 @@ void populate_known(Node* graph_nodes, int* graph_edge, bool *graph_mask, bool *
 			} 
 		} else {
 			graph_nodes[i].start = graph_nodes[i-1].start + graph_nodes[i-1].no_of_edges;
-			len += graph_nodes[i].no_of_edges;
+			int len += graph_nodes[i].no_of_edges;
 			graph_edge = (int *) realloc(graph_edge, sizeof(int)*len);
 			if ((graph_edge = (int *) realloc(graph_edge, sizeof(int)*len)) == NULL) {
 				printf("Could not reallocate memory for graph_edge : %d\n", i);
