@@ -222,7 +222,7 @@ void populate_random(Node* graph_nodes, int* graph_edge, bool *graph_mask, bool 
 		updating_graph_mask[i] = false;
 		graph_visited[i] = false;
 		h_graph_visited[i] = false;
-		for (j = graph_nodes[i].start; j < (graph_nodes[i].no_of_edges+graph_nodes[i].start); j++) {
+		for (int j = graph_nodes[i].start; j < (graph_nodes[i].no_of_edges+graph_nodes[i].start); j++) {
 			graph_edge[j] = rand() % VERTICES;
 			// printf("%d, ", graph_edge[j]);
 		}
@@ -230,13 +230,13 @@ void populate_random(Node* graph_nodes, int* graph_edge, bool *graph_mask, bool 
 }
 
 void populate_known(Node* graph_nodes, int* graph_edge, bool *graph_mask, bool *updating_graph_mask, bool *graph_visited, bool *h_graph_visited) {
-	for (i = 0; i < VERTICES; i++) {
+	for (int i = 0; i < VERTICES; i++) {
 		// GPU transfer
 		graph_nodes[i].no_of_edges = (rand() % (EDGES)) + 1;
 
 		if (i == 0) {
 			graph_nodes[i].start= i;
-			len = graph_nodes[i].no_of_edges;
+			int len = graph_nodes[i].no_of_edges;
 			graph_edge = (int *) malloc(sizeof(int)*len);
 			if ((graph_edge = (int *) malloc(sizeof(int) * len)) == NULL) {
 				printf("Could not allocate memory for graph_edge : %d\n", i);
@@ -257,7 +257,7 @@ void populate_known(Node* graph_nodes, int* graph_edge, bool *graph_mask, bool *
 		updating_graph_mask[i] = false;
 		graph_visited[i] = false;
 		h_graph_visited[i] = false;
-		for (j = graph_nodes[i].start; j < (graph_nodes[i].no_of_edges+graph_nodes[i].start); j++) {
+		for (int j = graph_nodes[i].start; j < (graph_nodes[i].no_of_edges+graph_nodes[i].start); j++) {
 			graph_edge[j] = (j + i ) % VERTICES;
 			// printf("%d, ", graph_edge[j]);
 		}
