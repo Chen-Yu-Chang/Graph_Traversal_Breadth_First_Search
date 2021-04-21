@@ -228,7 +228,7 @@ void populate_random(Node* graph_nodes, int* graph_edge, bool *graph_mask, bool 
 		}
 	}
 }
-
+/*
 void populate_known(Node* graph_nodes, int* graph_edge, bool *graph_mask, bool *updating_graph_mask, bool *graph_visited, bool *h_graph_visited) {
 	for (int i = 0; i < VERTICES; i++) {
 		// GPU transfer
@@ -263,7 +263,7 @@ void populate_known(Node* graph_nodes, int* graph_edge, bool *graph_mask, bool *
 		}
 	}
 }
-
+*/
 void bfs(Node* graph_nodes, int* graph_edge, int vertex, bool* visited) {
 	// double-ended queue
 	deque<int> q;
