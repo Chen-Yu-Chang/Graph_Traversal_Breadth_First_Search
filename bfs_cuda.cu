@@ -13,8 +13,8 @@
 #include <cstdlib>
 #include <math.h>
 #include <cuda.h>
-#include "cuPrintf.cu"
-#include "cuPrintf.cuh"
+//#include "cuPrintf.cu"
+//#include "cuPrintf.cuh"
 
 #define VERTICES 1000000
 #define EDGES 20
