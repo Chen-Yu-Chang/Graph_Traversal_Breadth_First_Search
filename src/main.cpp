@@ -1,10 +1,10 @@
 #include <iostream>
 #include <chrono>
 
-#include "graph.h"
-#include "bfs.h"
-#include "bfs_simple.cuh"
-#include "bfs_quadratic.cuh"
+#include "graph/graph.h"
+#include "cpu/bfs.h"
+#include "gpu/simple/bfs_simple.cuh"
+#include "gpu/quadratic/bfs_quadratic.cuh"
 
 using namespace std;
 
