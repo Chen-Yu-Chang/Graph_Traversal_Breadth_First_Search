@@ -3,7 +3,7 @@
 #include <math.h>
 #include <string.h>
 
-#define MAX_DIST 5000
+#define MAX_DIST 4000
 
 typedef struct graphVertices {
 	int startIndex;
