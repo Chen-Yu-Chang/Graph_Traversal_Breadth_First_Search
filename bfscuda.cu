@@ -1,7 +1,7 @@
 #include <iostream>
 #include <math.h>
-#include "graph.h"
-#include "bfscpu.h"
+//#include "graph.h"
+//#include "bfscpu.h"
 #include <queue>
 #include <thrust/reduce.h>
 #include <cooperative_groups.h>
