@@ -13,8 +13,8 @@
 #include <cstdlib>
 #include <math.h>
 #include <cuda.h>
-// #include "cuPrintf.cu"
-// #include "cuPrintf.cuh"
+#include "cuPrintf.cu"
+#include "cuPrintf.cuh"
 
 #define VERTICES 1000000
 #define EDGES 20
@@ -64,7 +64,7 @@ int main() {
 	int j = 0;
 	int len;
 
-	void populate_random(graph_nodes, graph_edge, graph_mask, updating_graph_mask, graph_visited, h_graph_visited);
+	populate_random(graph_nodes, graph_edge, graph_mask, updating_graph_mask, graph_visited, h_graph_visited);
 	// populate_known(graph_nodes, graph_edge, graph_mask, updating_graph_mask,graph_visited, h_graph_visited);
 
 	// Create the cuda events
