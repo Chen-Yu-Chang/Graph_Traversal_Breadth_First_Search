@@ -4,7 +4,7 @@
 #include <queue>
 #include <bits/stdc++.h>
 
-#include "../graph/graph.h"
+#include "graph.h"
 
 /*
  * start - vertex number from which traversing a graph starts
