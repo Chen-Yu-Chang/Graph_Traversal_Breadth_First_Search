@@ -10,7 +10,7 @@ int main() {
 
     srand(time(NULL));
 
-    ofstream file("DataSet/graph.txt");
+    ofstream file("graph.txt");
     file << 1024 << endl;
     file << vertices << " " << edges << endl;
 
