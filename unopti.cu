@@ -37,10 +37,10 @@ inline cudaError_t checkCuda(cudaError_t result)
 }
 
 //Number of vertices
-#define vertices 5000 
+#define vertices 7000
 
 //Number of edges per vertex
-#define Edge_per_node 4999
+#define Edge_per_node 4000
 
 //Used to define weights on each edge.
 #define Maximum_weight 5
