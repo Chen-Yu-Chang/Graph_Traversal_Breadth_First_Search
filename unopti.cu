@@ -187,15 +187,6 @@ int main( int argc, char* argv[] )
 
 	}
 
-/*	
-	//Can be uncommented to see the edges of each node
-	printf("=== Initial edges===\n");
-	for(i=0;i<vertices*Edge_per_node;i++)
-	{
-		printf("E[%d]= %d\n",i,edge_array[i]);
-	}
-*/	
-
 	printf("Adding Weights to each edge...\n");
 
 	//Adding weights to the edge_weight array
@@ -208,15 +199,6 @@ int main( int argc, char* argv[] )
 			edge_weight_array[i*Edge_per_node+j]=a+j*b;
 		}
 	}
-
-/*	
-	//Can be uncommented to see the edge weight of each edge
-	printf("=== Initial edge weight weight===\n");
-	for(i=0;i<vertices*Edge_per_node;i++)
-	{
-		printf("W[%d]= %d\n",i,edge_weight_array[i]);
-	}
-*/
 
 	//Initializing gpu variables
 	int *gpu_vertex_array;
@@ -257,22 +239,6 @@ int main( int argc, char* argv[] )
 	//Kernel call to initialize all the node weights. We provide the source node 0 
 	Initializing<<<gridSize, blockSize>>>(gpu_node_weight_array,gpu_mask_array, 0);
 	cudaError_t err = cudaGetLastError();
-	/*	
-	if (err != cudaSuccess) checkCuda(cudaMemcpy(node_weight_array,gpu_node_weight_array,vertex_array_size,cudaMemcpyDeviceToHost));
-	{
-		printf("Error: %s\n", cudaGetErrorString(err));
-	}
-	*/
-
-/*
-	//Can be uncommented to see the initial weights of each node
-	checkCuda(cudaMemcpy(node_weight_array,gpu_node_weight_array,vertex_array_size,cudaMemcpyDeviceToHost));	
-	printf("=== Initial node weight===\n");
-	for(i=0;i<vertices;i++)
-	{
-		printf("NW[%d]= %d\n ",i,node_weight_array[i]);
-	}
-*/
 
 	//Variable min used to store the minimum node wieght of the relaxed nodes and use this node to relax all of its edges
 	int *min=(int*)malloc(2*sizeof(int));
@@ -290,28 +256,8 @@ int main( int argc, char* argv[] )
 		checkCuda(cudaMemcpy(gpu_min,min,sizeof(int),cudaMemcpyHostToDevice));
 
 		Minimum<<<gridSize, blockSize>>>(gpu_mask_array,gpu_vertex_array,gpu_vertex_array_copy,gpu_node_weight_array,gpu_edge_array,gpu_edge_weight_array,gpu_min);
-		/*
-		if (err != cudaSuccess) checkCuda(cudaMemcpy(node_weight_array,gpu_node_weight_array,vertex_array_size,cudaMemcpyDeviceToHost));
-		{
-			printf("Error: %s\n", cudaGetErrorString(err));
-		}
-		*/
-		Relax<<<gridSize, blockSize>>>(gpu_mask_array,gpu_node_weight_array,gpu_min);
-		/*	
-		if (err != cudaSuccess) checkCuda(cudaMemcpy(node_weight_array,gpu_node_weight_array,vertex_array_size,cudaMemcpyDeviceToHost));
-		{
-			printf("Error: %s\n", cudaGetErrorString(err));
-		}
-		*/
 
-/*
-		//Can be uncommented to see the node weight and Dijkistra's Algorithm being performed ste by step
-		checkCuda(cudaMemcpy(node_weight_array,gpu_node_weight_array,vertex_array_size,cudaMemcpyDeviceToHost));
-		for(i=0;i<vertices;i++)
-		{
-			printf("NW[%d]= %d\n ",i,node_weight_array[i]);
-		}
-*/
+		Relax<<<gridSize, blockSize>>>(gpu_mask_array,gpu_node_weight_array,gpu_min);
 
 		checkCuda(cudaMemcpy(min,gpu_min,2*sizeof(int),cudaMemcpyDeviceToHost));	
 	}
@@ -324,15 +270,6 @@ int main( int argc, char* argv[] )
 	//Coppying the the final node weights from the Device to Host
 	checkCuda(cudaMemcpy(node_weight_array,gpu_node_weight_array,vertex_array_size,cudaMemcpyDeviceToHost));
 
-
-/*
-	//Can be uncommented to see the final shortes distance of all node from Source Node
-	printf("=== Final node weight===\n");
-	for(i=0;i<vertices;i++)
-	{
-		printf("NW[%d]= %d\n ",i,node_weight_array[i]);
-	}
-*/
 
 	cudaFree(gpu_vertex_array);
 	cudaFree(gpu_node_weight_array);

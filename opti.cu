@@ -176,15 +176,6 @@ int main( int argc, char* argv[] )
 
 	}
 
-/*	
-	//Can be uncommented to see the edges of each node
-	printf("=== Initial edges===\n");
-	for(i=0;i<vertices*Edge_per_node;i++)
-	{
-		printf("E[%d]= %d\n",i,edge_array[i]);
-	}
-*/	
-
 	printf("Initializing weights of each edge...\n");
 
 	//Adding weights to the edge_weight array
@@ -197,15 +188,6 @@ int main( int argc, char* argv[] )
 			edge_weight_array[i*Edge_per_node+j]=a+j*b;
 		}
 	}
-
-/*	
-	//Can be uncommented to check the weight of each edge
-	printf("=== Initial edge weight weight===\n");
-	for(i=0;i<vertices*Edge_per_node;i++)
-	{
-		printf("W[%d]= %d\n",i,edge_weight_array[i]);
-	}
-*/
 
 	//Initializing gpu variables
 	int *gpu_vertex_array;
@@ -246,16 +228,6 @@ int main( int argc, char* argv[] )
 		printf("Error: %s\n", cudaGetErrorString(err));
 	}
 
-/*	
-	//Can be Uncommented too check the initial node weight of each node
-	checkCuda(cudaMemcpy(node_weight_array,gpu_node_weight_array,vertex_array_size,cudaMemcpyDeviceToHost));	
-	printf("=== Initial node weight===\n");
-	for(i=0;i<vertices;i++)
-	{
-		printf("NW[%d]= %d\n ",i,node_weight_array[i]);
-	}
-*/
-
 	//Initial value of min which stores the minimum node weight in each iteration of relax.
 	int *min=(int*)malloc(2*sizeof(int));
 	min[0]=0;
@@ -282,16 +254,6 @@ int main( int argc, char* argv[] )
 			printf("Error: %s\n", cudaGetErrorString(err));
 		}
 		checkCuda(cudaMemcpy(node_weight_array,gpu_node_weight_array,vertex_array_size,cudaMemcpyDeviceToHost));
-
-/*	
-		//Can be uncommented to see the node weights after each iteration and/or to see the algorithm move step by step	
-		printf("=== %d node weight===\n",count);
-		for(i=0;i<vertices;i++)
-		{
-			printf("NW[%d]= %d\n ",i,node_weight_array[i]);
-		}
-*/			
-
 		checkCuda(cudaMemcpy(min,gpu_min,2*sizeof(int),cudaMemcpyDeviceToHost));	
 	}
 
@@ -301,15 +263,6 @@ int main( int argc, char* argv[] )
 	//Stop Timer
 	TIMER_END(start_time);
 	printf("Kernel Execution Time: %f ms\n", start_time);
-
-/*	
-	//Can be uncommented to see the final node weights of the settled graph. i.e. the shortest distance from Source to all the nodes
-	printf("=== Final node weight===\n");
-	for(i=0;i<vertices;i++)
-	{
-		printf("NW[%d]= %d\n ",i,node_weight_array[i]);
-	}
-*/
 
 	cudaFree(gpu_vertex_array);
 	cudaFree(gpu_node_weight_array);
